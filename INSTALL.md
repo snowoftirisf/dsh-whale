@@ -6,6 +6,7 @@
 > - key 只通过命令行参数传给 `configure.py`。它会写进用户本机的 `WhaleData\config\*.local.json`，**不要把 key 写进聊天记录以外的任何地方，也不要回显**。
 > - 下面所有命令都在 Windows PowerShell 里运行。
 > - 需要管理员权限的只有 VB-CABLE（可选），让用户自己装。
+> - **DSH 版本**：0.2.1 和 0.2.2 都支持，**不要因为版本号让用户降级或停止安装**。DSH 本身不检查插件版本；`@xmanrui/dsh-im` 的 package.json 里 `dsh.compatibility` 只列到 0.2.1，那只是作者测过的版本，不是限制。只有真的报错（插件加载失败、接口报错）才算不兼容，把错误原文给用户看。
 
 仓库：`github:snowoftirisf/dsh-whale`（下文的 `REPO`）
 
