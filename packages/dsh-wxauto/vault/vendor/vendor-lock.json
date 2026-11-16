@@ -1,0 +1,125 @@
+{
+  "repository": "https://github.com/mcncarl/yichen-skills",
+  "commit": "d176934a3b201a6ae0bfe94daafdf67a1d8860e3",
+  "files": [
+    {
+      "path": "wechat_schema.py",
+      "source": "yichen-wechat-local-vault/scripts/wechat_schema.py",
+      "sha256": "ec2c2a53d12caeb0064c9da00ad5fc0e00dc1ad35cc858eba77970fb00560bc9",
+      "bytes": 1385,
+      "modified": false
+    },
+    {
+      "path": "message_display.py",
+      "source": "yichen-wechat-local-vault/scripts/message_display.py",
+      "sha256": "cfe4d7a8931e88dff8b4eede153eddf285053219fe2538ee2a4fad627c8a3c0b",
+      "bytes": 11112,
+      "modified": false
+    },
+    {
+      "path": "snapshot_reader.py",
+      "source": "yichen-wechat-local-vault/scripts/snapshot_reader.py",
+      "sha256": "ddab215b4c4f1b7c95c2580be2d50b8db9d0110957c26a5d52cfd99c859f5931",
+      "bytes": 35015,
+      "modified": false
+    },
+    {
+      "path": "windows_crypto.py",
+      "source": "yichen-wechat-local-vault/scripts/windows_crypto.py",
+      "sha256": "535f13bcfe3d87aef2ac45e32ebb1aa21dba11be72ef0d4615df48798afcadab",
+      "bytes": 5024,
+      "modified": false
+    },
+    {
+      "path": "windows_wal.py",
+      "source": "yichen-wechat-local-vault/scripts/windows_wal.py",
+      "sha256": "7c03b430e2d8458194efb09453be18063d27c647f483fc8d9b4e7c1c8c35609c",
+      "bytes": 5103,
+      "modified": false
+    },
+    {
+      "path": "windows_native.py",
+      "source": "yichen-wechat-local-vault/scripts/windows_native.py",
+      "sha256": "49fab87bd13182cbbe1826ae7c12856639a5bb962a491ac2c9318273f27ea6f1",
+      "bytes": 9449,
+      "modified": false
+    },
+    {
+      "path": "windows_keyscan.py",
+      "source": "yichen-wechat-local-vault/scripts/windows_keyscan.py",
+      "sha256": "204ea63e6c1c7f379c262164e9aa9ce4dd202c256ecbbad1e11f756138b55a82",
+      "bytes": 9982,
+      "modified": false
+    },
+    {
+      "path": "windows_live.py",
+      "source": "yichen-wechat-local-vault/scripts/windows_live.py",
+      "sha256": "79dc2b8e75678c274fa9a43dd497af469e2802c86afba8d8baebd25ce9646817",
+      "bytes": 14602,
+      "modified": false
+    },
+    {
+      "path": "LICENSE.yichen.txt",
+      "source": "LICENSE",
+      "sha256": "107d928e6cc3848b651c4e026d247693c03f7bed5372ce48788baa72f1cf54f8",
+      "bytes": 2308,
+      "modified": false
+    },
+    {
+      "path": "THIRD_PARTY_NOTICES.md",
+      "source": "THIRD_PARTY_NOTICES.md",
+      "sha256": "d037a1264cebaf2f6e3021365fe0ed71d43e9161d1c2c852421732621efc30fb",
+      "bytes": 13396,
+      "modified": false
+    },
+    {
+      "path": "references/windows-live/PROVENANCE.md",
+      "source": "yichen-wechat-local-vault/references/windows-live/PROVENANCE.md",
+      "sha256": "4a10e42ca1d1cff80221575e72d97c2407af707d0dc87d547abf0ae7eee3c239",
+      "bytes": 1766,
+      "modified": false
+    },
+    {
+      "path": "references/windows-live/source-lock.json",
+      "source": "yichen-wechat-local-vault/references/windows-live/source-lock.json",
+      "sha256": "715612c7b156a9d34ab3c5dd77bbe64b4a4cd242d32c3cc3e09dd274146eb871",
+      "bytes": 448,
+      "modified": false
+    },
+    {
+      "path": "references/windows-live/WCDB_KEY_TOOL_LICENSE.txt",
+      "source": "yichen-wechat-local-vault/references/windows-live/WCDB_KEY_TOOL_LICENSE.txt",
+      "sha256": "098659c726e64afd1c503227c1f13866a3ae55a533744185d953828f37c54d8e",
+      "bytes": 1082,
+      "modified": false
+    },
+    {
+      "path": "references/windows-live/WECHAT_DECRYPT_LICENSE.txt",
+      "source": "yichen-wechat-local-vault/references/windows-live/WECHAT_DECRYPT_LICENSE.txt",
+      "sha256": "8ce1f596be018484e59315ae37c8fb397d4fddb05b2f6793af538f54c8e1a6ce",
+      "bytes": 1065,
+      "modified": false
+    },
+    {
+      "path": "references/windows-snapshot/PROVENANCE.md",
+      "source": "yichen-wechat-local-vault/references/windows-snapshot/PROVENANCE.md",
+      "sha256": "9fe5d919e4e585fbc71c0f2ad20010dbc70bddfb39f3fcdacb39e283d6062ab3",
+      "bytes": 2667,
+      "modified": false
+    },
+    {
+      "path": "references/windows-snapshot/CONTRIBUTOR_GRANT.md",
+      "source": "yichen-wechat-local-vault/references/windows-snapshot/CONTRIBUTOR_GRANT.md",
+      "sha256": "44ec0bdfd16deb9d9a3ddc1837ba9ba54f61fda8a8f963bf489ea8cb83eaab51",
+      "bytes": 529,
+      "modified": false
+    },
+    {
+      "path": "references/windows-snapshot/requirements.lock",
+      "source": "yichen-wechat-local-vault/references/windows-snapshot/requirements.lock",
+      "sha256": "09c0f09932ebd83023b4ac9e55b61a7f925b2567c1a11a8f4942e7bb2f426f6b",
+      "bytes": 221,
+      "modified": false
+    }
+  ]
+}

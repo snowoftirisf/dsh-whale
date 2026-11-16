@@ -1,0 +1,43 @@
+# ---- Never commit personal data, secrets or runtime state ----
+*.local.*
+*.log
+.env
+.env.*
+**/status*.json
+**/receipts*.json
+**/credentials*.json
+**/cookies*.json
+*.sqlite
+*.db
+*.db-wal
+*.db-shm
+*.dat
+wx-media/
+WhaleData/
+snapshots/
+
+# ---- yichen-skills modules: fetched per user by setup/fetch-vendor.mjs (license forbids redistribution) ----
+packages/dsh-wxauto/vault/vendor/*
+!packages/dsh-wxauto/vault/vendor/__init__.py
+!packages/dsh-wxauto/vault/vendor/vendor-lock.json
+
+# ---- build / tooling ----
+node_modules/
+__pycache__/
+*.pyc
+.venv*/
+.pytest_cache/
+.test-tmp/
+packages/dsh-wxauto/artifacts/*
+!packages/dsh-wxauto/artifacts/.gitkeep
+packages/dsh-wxauto/diagnostic-images/
+packages/dsh-wxauto/test-temp.local/
+packages/dsh-wxauto/vault/tmp*/
+coverage/
+
+# python tempfile leftovers from tests
+**/tmp[a-z0-9_][a-z0-9_][a-z0-9_][a-z0-9_][a-z0-9_][a-z0-9_]*/
+
+# runtime diagnostics
+**/diagnostics/*.jsonl
+**/root-test/

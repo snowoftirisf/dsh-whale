@@ -1,0 +1,15 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import fs from 'node:fs';import path from 'node:path';
+import {createHistoryService} from './history-service.mjs';
+function fixture(t){const dataRoot=fs.mkdtempSync(path.resolve('artifacts/group-history-'));const calls=[];
+ const config={dataRoot,accountId:'fixture',target:'owner',chatKeys:{owner:'private',room:'wechat:room@chatroom'}};
+ const routes=new Map([['owner',{target:'owner',kind:'friend'}],['room',{target:'room',kind:'group'}]]);
+ const client={request:async(op,args)=>{calls.push({op,args});if(op==='ensure_chat')return {id:'chat:'+args.chat_key};if(op==='record_message')return {id:'saved'};if(op==='status')return {};throw Error('unexpected');},close(){}};
+ const service=createHistoryService({config,root:dataRoot,routes,routeSessionId:r=>r.target+'-session',currentSessionId:()=> 'owner-session',report(){},client});
+ t.after(()=>{service.close();fs.rmSync(dataRoot,{recursive:true,force:true});});
+ const event={event:'message',id:'native-group-text:'+'1'.repeat(32),target:'room',kind:'group',direction:'incoming',sender:'member',text:'prefix:\nbody',rawText:'prefix:\nbody',nativeSourceText:'prefix:\nbody',renderStatus:'raw-preserved',mediaType:'text',timestamp:100000,
+  sourceKind:'wechat-native-group-text',nativeId:'wechat-server:1',nativeGroupTextClaimId:'1'.repeat(32),authorityEpoch:'2'.repeat(32),nativeAccountId:'fixture',nativeChatKey:'wechat:room@chatroom',nativeSenderId:'member',nativeSenderNumericId:7,nativeSnapshotId:'authenticated-fixture',images:[],files:[]};return {service,calls,event,routes};}
+test('group native provenance is durable and active source remains the original group',async t=>{const f=fixture(t);assert.equal((await f.service.incoming(f.event)).id,'saved');const record=f.calls.find(c=>c.op==='record_message').args;assert.equal(record.source,'wechat-native-group-text');assert.equal(record.text,f.event.rawText);assert.equal(record.sender_id,'member');assert.equal(record.metadata.nativeGroupTextClaimId,f.event.nativeGroupTextClaimId);
+ const tok=await f.service.beginInput('room-session','room',[f.event]);assert.deepEqual(f.service.currentSource('room-session'),{chatId:'chat:wechat:room@chatroom',messageIds:['saved'],sourceKind:'wechat-native-group-text'});assert.equal(f.service.currentSource('owner-session'),null);f.service.endInput('room-session',tok);});
+test('wrong account/chat/type/media/claim and inactive route fail before journal',async t=>{const f=fixture(t);for(const change of [{nativeAccountId:'other'},{nativeChatKey:'wechat:other@chatroom'},{kind:'friend'},{target:'owner'},{nativeSenderNumericId:null},{direction:'outgoing'},{authorityEpoch:'bad'},{nativeGroupTextClaimId:'bad'},{sourceKind:'wxauto-incoming'},{files:[{}]},{text:'different'},{rawText:undefined}]){const event={...f.event,...change};assert.equal(await f.service.incoming(event),null);await assert.rejects(()=>f.service.beginInput('room-session','room',[event]),/native-group-text-event-invalid/);}assert.equal(f.calls.length,0);f.routes.get('room').active=false;assert.equal(await f.service.incoming(f.event),null);});

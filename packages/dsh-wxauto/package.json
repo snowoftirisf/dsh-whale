@@ -1,0 +1,35 @@
+{
+  "name": "local-dsh-wxauto",
+  "version": "0.2.0",
+  "type": "module",
+  "main": "index.mjs",
+  "exports": {
+    ".": "./index.mjs",
+    "./client": "./client.js",
+    "./package.json": "./package.json",
+    "./cordis.patch.yml": "./cordis.patch.yml"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "inject": [],
+      "platform": "web"
+    }
+  },
+  "license": "MIT",
+  "description": "小鲸的微信通道（DeepSeek Harness 插件）：wxauto4 收发 + 本地快照原生收文字/图片/语音、Gemini 看图、BreezeBlue 语音条、记忆视图、TikHub 只读。",
+  "keywords": [
+    "deepseek-harness",
+    "dsh-plugin",
+    "wechat",
+    "wxauto",
+    "companion"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/snowoftirisf/dsh-whale.git",
+    "directory": "packages/dsh-wxauto"
+  }
+}

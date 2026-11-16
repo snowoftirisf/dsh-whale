@@ -1,0 +1,178 @@
+// Durable one-time submission of authenticated native unread messages.
+// UI observations are not merged by text/time; native server IDs retain identity.
+import fs from 'node:fs';
+import path from 'node:path';
+import {createHash,randomUUID} from 'node:crypto';
+import {nativeGroupTextClaimId} from './group-text-contract.mjs';
+
+const hash=x=>createHash('sha256').update(x).digest('hex');
+const messageIdentity=m=>[m.nativeId,m.serverId,m.senderId,m.senderDisplayName,m.type,m.text,m.timestampSeconds,m.contextOnly];
+export const nativeGroupClaimHash=value=>hash(JSON.stringify([value.accountId,value.nativeChatKey,value.target,
+  value.sessionId,value.claimId,value.snapshotId,value.serverIds,value.messages.map(messageIdentity)]));
+const delegationHash=(value,voices)=>hash(JSON.stringify([value.accountId,value.nativeChatKey,value.claimId,value.claimHash,voices]));
+function validateDelegation(value,{required=false}={}){
+  const voices=value.messages.filter(m=>m.type==='voice'),receipt=value.voiceDelegation;
+  if(!receipt){if(required&&voices.some(m=>!(value.handledServerIds??[]).includes(m.serverId)))throw Error('native-group-voice-delegation-required');return;}
+  if(receipt.format!=='whale-native-group-voice-delegation'||receipt.version!==1
+    ||receipt.claimId!==value.claimId||receipt.claimHash!==value.claimHash||!Array.isArray(receipt.voices)
+    ||receipt.voices.length!==voices.length||receipt.digest!==delegationHash(value,receipt.voices))throw Error('native-group-voice-delegation-invalid');
+  const ids=new Set(),claims=new Set();
+  for(const item of receipt.voices){
+    const original=voices.find(m=>m.serverId===item.serverId);
+    if(!original||item.nativeId!==original.nativeId||item.nativeChatKey!==value.nativeChatKey
+      ||!/^([a-f0-9]{32})$/.test(item.claimId??'')||ids.has(item.serverId)||claims.has(item.claimId)
+      ||!['queued','submitted','baseline'].includes(item.state))throw Error('native-group-voice-delegation-invalid');
+    ids.add(item.serverId);claims.add(item.claimId);
+  }
+}
+const textDelegationHash=(value,receipt)=>hash(JSON.stringify([value.accountId,value.nativeChatKey,value.claimId,value.claimHash,
+  receipt.authorityEpoch,receipt.ownershipMode,receipt.texts,receipt.newTextClaimIds]));
+function validateTextDelegation(value,{required=false}={}){
+  const texts=value.messages.filter(m=>m.type==='text'),receipt=value.textDelegation;
+  if(!receipt){if(required&&texts.some(m=>!(value.handledServerIds??[]).includes(m.serverId)))throw Error('native-group-text-delegation-required');return;}
+  if(receipt.format!=='whale-native-group-text-delegation'||receipt.version!==1||receipt.accountId!==value.accountId
+    ||receipt.nativeChatKey!==value.nativeChatKey||receipt.claimId!==value.claimId||receipt.claimHash!==value.claimHash
+    ||!['new-admission','existing-inbox'].includes(receipt.ownershipMode)
+    ||!/^[a-f0-9]{32}$/.test(receipt.authorityEpoch??'')||!Array.isArray(receipt.texts)||receipt.texts.length!==texts.length
+    ||!Array.isArray(receipt.newTextClaimIds)||new Set(receipt.newTextClaimIds).size!==receipt.newTextClaimIds.length
+    ||receipt.ownershipMode==='existing-inbox'&&receipt.newTextClaimIds.length!==0
+    ||receipt.digest!==textDelegationHash(value,receipt))throw Error('native-group-text-delegation-invalid');
+  const seen=new Set(),claims=new Set();
+  for(const item of receipt.texts){
+    const original=texts.find(m=>m.serverId===item.serverId);
+    if(!original||item.nativeId!==original.nativeId||item.nativeChatKey!==value.nativeChatKey||seen.has(item.serverId)||claims.has(item.claimId)
+      ||item.claimId!==nativeGroupTextClaimId(value.accountId,value.nativeChatKey,item.serverId)
+      ||!['baseline','held','queued','submitted'].includes(item.state)||item.senderId!==original.senderId
+      ||item.timestampSeconds!==original.timestampSeconds||typeof item.rawSha256!=='string'||!/^[a-f0-9]{64}$/.test(item.rawSha256)
+      ||item.queuedTextSha256!==hash(original.text)
+      ||item.snapshotSourceId!==original.snapshotSourceId||!Number.isSafeInteger(item.localId)||item.localId<=0
+      ||(original.localId!==undefined&&original.localId!==item.localId))throw Error('native-group-text-delegation-invalid');
+    if(item.state==='held'&&!(value.handledServerIds??[]).includes(original.serverId))throw Error('native-group-text-delegation-held-pending');
+    seen.add(item.serverId);claims.add(item.claimId);
+  }
+  for(const id of receipt.newTextClaimIds){
+    const item=receipt.texts.find(c=>c.claimId===id);
+    if(!item||!['queued','submitted'].includes(item.state))throw Error('native-group-text-delegation-invalid');
+  }
+}
+
+export function createNativeGroupInbox({dataRoot,accountId,textDelegation=false}) {
+  if(typeof textDelegation!=='boolean')throw Error('native-group-text-delegation-config-invalid');
+  const folder=path.join(dataRoot,'config','auto-group-inbox');
+  const fileFor=key=>path.join(folder,hash(accountId+'\0'+key)+'.json');
+  const write=(file,value)=>{
+    fs.mkdirSync(folder,{recursive:true});
+    const temporary=file+'.'+randomUUID()+'.tmp';let fd;
+    try{fd=fs.openSync(temporary,'wx');fs.writeFileSync(fd,JSON.stringify(value,null,2));fs.fsyncSync(fd);fs.closeSync(fd);fd=undefined;fs.renameSync(temporary,file);}
+    finally{if(fd!==undefined)fs.closeSync(fd);}
+  };
+  const read=record=>{
+    const file=fileFor(record.nativeChatKey);let stat;
+    try{stat=fs.lstatSync(file);}catch(error){if(error.code==='ENOENT')return null;throw error;}
+    if(!stat.isFile()||stat.isSymbolicLink()||stat.nlink!==1||stat.size>1024*1024)throw Error('native-group-inbox-file-invalid');
+    const value=JSON.parse(fs.readFileSync(file,'utf8'));
+    if(value.format!=='whale-native-group-inbox'||value.version!==1||value.accountId!==accountId
+      ||value.nativeChatKey!==record.nativeChatKey||value.target!==record.target||value.sessionId!==record.sessionId
+      ||!['queued','submitted'].includes(value.state)||!Array.isArray(value.messages)
+      ||(value.handledServerIds!==undefined&&(!Array.isArray(value.handledServerIds)||value.handledServerIds.some(id=>!/^[1-9][0-9]*$/.test(id))))
+      ||value.claimHash!==nativeGroupClaimHash(value))throw Error('native-group-inbox-invalid');
+    validateDelegation(value);
+    validateTextDelegation(value);
+    return value;
+  };
+  return {
+    read,
+    enqueue(record,unread) {
+      if(unread?.state!=='ready'||unread.source!=='authenticated-wechat-native-unread'||unread.accountId!==accountId
+        ||unread.nativeChatKey!==record.nativeChatKey||!Array.isArray(unread.messages)||unread.messages.length<1
+        ||unread.messages.length>20||unread.unreadCount!==unread.messages.length
+        ||!Array.isArray(unread.serverIds)||unread.serverIds.length!==unread.messages.length)throw Error('native-group-inbox-source-invalid');
+      const ids=new Set();
+      for(const m of unread.messages){
+        if(!/^[1-9][0-9]*$/.test(m.serverId)||m.nativeId!=='wechat-server:'+m.serverId||ids.has(m.serverId)
+          ||!['text','system','voice'].includes(m.type)||m.direction!=='incoming'||typeof m.text!=='string'
+          ||!Number.isSafeInteger(m.timestampSeconds)||m.timestampSeconds<=0||typeof m.senderId!=='string'||!m.senderId
+          ||typeof m.senderDisplayName!=='string'||!m.senderDisplayName||m.contextOnly!==(m.type==='system'))throw Error('native-group-inbox-message-invalid');
+        ids.add(m.serverId);
+      }
+      if(unread.serverIds.some(id=>!ids.has(id))||new Set(unread.serverIds).size!==ids.size)throw Error('native-group-inbox-id-conflict');
+      const old=read(record);
+      if(old?.state==='queued'&&old.serverIds.every(id=>ids.has(id))){
+        for(const m of old.messages){
+          const current=unread.messages.find(x=>x.serverId===m.serverId);
+          if(!current||hash(JSON.stringify(messageIdentity(current)))!==hash(JSON.stringify(messageIdentity(m))))throw Error('native-group-inbox-source-changed');
+        }
+        if(old.serverIds.length===ids.size)return old;
+      }else if(old?.state==='queued')throw Error('native-group-inbox-unread-set-changed');
+      const value={format:'whale-native-group-inbox',version:1,accountId,nativeChatKey:record.nativeChatKey,
+        target:record.target,sessionId:record.sessionId,claimId:randomUUID().replaceAll('-',''),state:'queued',
+        snapshotId:unread.snapshotId,unreadCount:unread.unreadCount,serverIds:unread.serverIds,messages:unread.messages,
+        handledServerIds:old?.handledServerIds??[]};
+      value.claimHash=nativeGroupClaimHash(value);write(fileFor(record.nativeChatKey),value);return value;
+    },
+    submit(record,claimId) {
+      const value=read(record);
+      if(!value||value.state!=='queued'||value.claimId!==claimId)return null;
+      validateDelegation(value,{required:true});
+      validateTextDelegation(value,{required:textDelegation});
+      // Claim BEFORE Harness submission. A crash/unknown result never replays.
+      write(fileFor(record.nativeChatKey),{...value,state:'submitted',submittedAt:Date.now(),
+        handledServerIds:[...new Set([...(value.handledServerIds??[]),...value.serverIds])]});
+      return value;
+    },
+    delegateVoices(record,claimId,claims){
+      const value=read(record);
+      if(!value||value.state!=='queued'||value.claimId!==claimId)throw Error('native-group-voice-claim-not-queued');
+      if(!Array.isArray(claims)||claims.some(c=>!c||typeof c!=='object'))throw Error('native-group-voice-delegation-invalid');
+      const voices=claims.map(c=>({claimId:c.claimId,serverId:c.serverId,nativeId:c.nativeId,nativeChatKey:c.nativeChatKey,state:c.state}));
+      const receipt={format:'whale-native-group-voice-delegation',version:1,claimId,claimHash:value.claimHash,voices,digest:delegationHash(value,voices)};
+      const next={...value,voiceDelegation:receipt};validateDelegation(next,{required:true});
+      // Receipt proves durable ownership only; queued/submitted are not delivery receipts.
+      if(JSON.stringify(value.voiceDelegation)!==JSON.stringify(receipt))write(fileFor(record.nativeChatKey),next);
+      return next;
+    },
+    delegateTexts(record,claimId,{authorityEpoch,ownershipMode,texts,newTextClaimIds}){
+      const value=read(record);
+      if(!value||value.state!=='queued'||value.claimId!==claimId)throw Error('native-group-text-claim-not-queued');
+      if(!Array.isArray(texts)||!Array.isArray(newTextClaimIds))throw Error('native-group-text-delegation-invalid');
+      const owners=texts.map(c=>{
+        const original=value.messages.find(m=>m.serverId===c.serverId&&m.type==='text');
+        if(!original||typeof c.rawText!=='string')throw Error('native-group-text-delegation-invalid');
+        return {claimId:c.claimId,serverId:c.serverId,nativeId:c.nativeId,nativeChatKey:c.nativeChatKey,state:c.state,
+          senderId:c.senderId,timestampSeconds:c.timestampSeconds,rawSha256:hash(c.rawText),
+          queuedTextSha256:hash(original.text),snapshotSourceId:c.snapshotSourceId,localId:c.localId};
+      });
+      const receipt={format:'whale-native-group-text-delegation',version:1,accountId,nativeChatKey:value.nativeChatKey,
+        claimId,claimHash:value.claimHash,authorityEpoch,ownershipMode,texts:owners,newTextClaimIds:[...newTextClaimIds]};
+      receipt.digest=textDelegationHash(value,receipt);const next={...value,textDelegation:receipt};validateTextDelegation(next,{required:true});
+      if(JSON.stringify(value.textDelegation)!==JSON.stringify(receipt))write(fileFor(record.nativeChatKey),next);
+      const actual=read(record);
+      if(JSON.stringify(actual?.textDelegation)!==JSON.stringify(receipt))throw Error('native-group-text-delegation-write-unverified');
+      return actual;
+    },
+    events(record,value,proof) {
+      if(value.accountId!==accountId||value.nativeChatKey!==record.nativeChatKey||value.target!==record.target
+        ||value.sessionId!==record.sessionId||value.claimHash!==nativeGroupClaimHash(value))throw Error('native-group-inbox-invalid');
+      validateDelegation(value,{required:true});
+      validateTextDelegation(value,{required:textDelegation});
+      const delegatedTexts=new Set(value.textDelegation?.texts.map(m=>m.nativeId)??[]);
+      const remaining=value.messages.filter(m=>m.type!=='voice'&&!delegatedTexts.has(m.nativeId)&&!(value.handledServerIds??[]).includes(m.serverId));
+      // New native owners may be resumed without the transient old UI proof
+      // only when NO original SDK event remains. Never invent system text.
+      if(remaining.length===0)return [];
+      if(proof?.nativeClaimId!==value.claimId||proof?.nativeClaimHash!==value.claimHash
+        ||!Array.isArray(proof.nativeRenderedMessages)||proof.nativeRenderedMessages.length!==value.messages.length)
+        throw Error('native-group-render-proof-invalid');
+      const rendered=new Map();
+      for(const message of proof.nativeRenderedMessages){
+        if(typeof message?.text!=='string'||message.text.length>32000||rendered.has(message.nativeId)
+          ||!value.messages.some(m=>m.nativeId===message.nativeId))throw Error('native-group-render-proof-invalid');
+        rendered.set(message.nativeId,message.text);
+      }
+      return remaining.map(m=>({id:'native-unread:'+hash(accountId+'\0'+record.nativeChatKey)+':'+m.serverId,
+        target:record.target,kind:'group',sender:m.senderDisplayName,text:rendered.get(m.nativeId),nativeSourceText:m.text,
+        timestamp:m.timestampSeconds*1000,mediaType:m.type,sourceKind:'wechat-native-unread',nativeId:m.nativeId,
+        nativeSenderId:m.senderId,nativeSnapshotId:value.snapshotId,contextOnly:m.contextOnly,images:[],files:[]}));
+    },
+  };
+}

@@ -1,0 +1,15 @@
+{
+  "baseline": "published dsh-bili-whale 0.4.6",
+  "baselineFiles": 119,
+  "missingFiles": [],
+  "modifiedOriginalFiles": [
+    "lib\\index.js",
+    "lib\\scheduler.js",
+    "lib\\session-delivery.js",
+    "tools\\lib\\paths.mjs"
+  ],
+  "unchangedOriginalFiles": 115,
+  "deployedMatchesWorkspace": true,
+  "jsTestsPassed": 175,
+  "pythonTestsLastPassed": 17
+}
