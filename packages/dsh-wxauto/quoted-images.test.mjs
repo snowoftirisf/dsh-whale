@@ -46,7 +46,11 @@ test('sticker download refuses non-WeChat hosts and md5 mismatches', async () =>
   const ok=async()=>({ok:true,arrayBuffer:async()=>gif});
   assert.equal(await fetchQuotedSticker('0'.repeat(32),'https://evil.example/x',{directory:dir,fetchImpl:ok}),null);
   assert.equal(await fetchQuotedSticker('0'.repeat(32),'http://vweixinf.tc.qq.com/x',{directory:dir,fetchImpl:ok}),null);
+  assert.equal(await fetchQuotedSticker('0'.repeat(32),'https://wechat.com.evil.example/x',{directory:dir,fetchImpl:ok}),null);
   const {createHash}=await import('node:crypto');const md5=createHash('md5').update(gif).digest('hex');
+  // Senders abroad: WeChat records the overseas CDN copy.
+  assert.equal(path.extname(await fetchQuotedSticker(md5,'https://snsvideo.c2c.wechat.com/x',{directory:dir,fetchImpl:ok})),'.gif');
+  fs.rmSync(path.join(dir,md5+'.gif'));
   assert.equal(path.extname(await fetchQuotedSticker(md5,'http://vweixinf.tc.qq.com/x',{directory:dir,fetchImpl:ok})),'.gif');
   fs.rmSync(dir,{recursive:true,force:true});
 });

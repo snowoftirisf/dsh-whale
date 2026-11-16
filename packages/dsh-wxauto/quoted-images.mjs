@@ -8,7 +8,7 @@ import {createHash} from 'node:crypto';
 export const QUOTED_IMAGE_MARK='（被引用图片编号 wx-img:';
 // svrid, then optionally |md5|cdnurl for a sticker's plain CDN copy.
 const MARKER=/（被引用图片编号 wx-img:([1-9][0-9]{0,19})(?:\|([0-9a-f]{32})\|([^\s|）<>"]{1,2048}))?）/g;
-const STICKER_HOST=/^https?:\/\/[A-Za-z0-9.-]+\.qq\.com\//;
+const STICKER_HOST=/^https?:\/\/[A-Za-z0-9.-]+\.(?:qq|wechat)\.com\//; // wechat.com = overseas CDN
 const MAX_STICKER_BYTES=20*1024*1024;
 
 function imageExtension(bytes) {

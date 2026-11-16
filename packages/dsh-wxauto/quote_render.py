@@ -32,7 +32,8 @@ _FILE_MD5 = re.compile(rb'(?i)(?<![0-9a-f])([0-9a-f]{32})(?![0-9a-f])')
 # Must match QUOTED_IMAGE_MARK in quoted-images.mjs.
 QUOTED_IMAGE_MARK = '（被引用图片编号 wx-img:'
 # Plain sticker copies only; must match STICKER_HOST in quoted-images.mjs.
-STICKER_URL = re.compile(r'https?://[A-Za-z0-9.-]+\.qq\.com/[^\s|）<>"]{1,2000}')
+# Senders abroad get the overseas CDN (e.g. snsvideo.c2c.wechat.com); md5 is still checked on download.
+STICKER_URL = re.compile(r'https?://[A-Za-z0-9.-]+\.(?:qq|wechat)\.com/[^\s|）<>"]{1,2000}')
 LABELS = {'3': '图片', '34': '语音', '42': '名片', '43': '视频', '47': '表情', '48': '位置', '50': '通话'}
 PREFIX = re.compile(r'\A\s*[A-Za-z0-9_.-]+(?:@(?:chatroom|openim))?:\r?\n')
 INTERNAL_ID = re.compile(r'(?i)(?<![\w])wxid_[A-Za-z0-9_-]+')
