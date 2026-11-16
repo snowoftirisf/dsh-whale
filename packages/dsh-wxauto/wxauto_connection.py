@@ -113,14 +113,18 @@ def connect():
     WxParam.ENABLE_FILE_LOGGER = False
     WxParam.TELEMETRY_ENABLED = False
     candidates = []
+    seen = []
     for hwnd, _, title in GetAllWindows():
         if title not in ('微信', 'WeChat', 'Weixin'):
             continue
         control = uia.ControlFromHandle(hwnd)
+        seen.append(str(control.ClassName))
         if control.ClassName == 'mmui::MainWindow':
             candidates.append((hwnd, control))
     if len(candidates) != 1:
-        raise RuntimeError('expected-one-main-window')
+        # Say what was seen so a remote user can report it (setup/wx-window-probe.py has more).
+        raise RuntimeError(f'expected-one-main-window: found {len(candidates)}; '
+                           f'WeChat-titled windows by UIA class: {sorted(seen) or "none"}')
     hwnd, control = candidates[0]
     control=ensure_main_tree(control,uia=uia)['root']
     navigation = control.ToolBarControl(ClassName='mmui::MainTabBar')

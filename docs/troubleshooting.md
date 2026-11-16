@@ -34,6 +34,21 @@ UI 自动化和数据库读取都和微信版本有关。已验证的版本是 4
 - 先在体检里看是哪一项失败；
 - 回到已验证版本，或者等 wxauto4 / yichen-skills 上游更新。
 
+## 状态一直是 wechat-not-ready / expected-one-main-window
+
+插件要找到**正好一个**微信主窗口（UI 自动化类名 `mmui::MainWindow`）。按顺序排查：
+
+1. 微信要用普通权限启动：托盘右键「退出」，从开始菜单打开（不要从管理员 PowerShell 里启动，安装程序装完自动拉起的微信也要重开一次）。
+2. 关掉微信里所有弹窗和独立聊天窗口，主窗口不要最小化。
+3. 跑只读探测，把输出原样发出来求助（它只列窗口，不点击、不写文件）：
+
+```powershell
+$p = "$env:USERPROFILE\.dsh\profiles\desktop\node_modules\local-dsh-wxauto"
+& "$env:USERPROFILE\WhaleData\runtime\.venv-wxauto\Scripts\python.exe" -X utf8 "$p\setup\wx-window-probe.py"
+```
+
+正常时第一段里会有一行 `uia='mmui::MainWindow'`。
+
 ## 磁盘越来越大
 
 每次抓取会生成一份解密快照，插件只保留最新 50 份和正在使用的，其余自动删除。`WhaleData\snapshots` 正常在几百 MB 以内。
