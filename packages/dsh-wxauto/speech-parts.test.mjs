@@ -10,7 +10,7 @@ test('model chooses voice, text and memes in explicit order without trigger heur
 });
 test('not ready preserves words without leaking voice markers or pretending delivery',()=>{
   assert.deepEqual(speechParts('[[wx-voice]]你好[[/wx-voice]]','friend',false),[{kind:'text',text:'你好'}]);
-  assert.throws(()=>speechParts('[[wx-voice]]没闭合','friend',true),/unclosed/);
+  assert.deepEqual(speechParts('前文\n\n[[wx-voice]]没闭合','friend',true),[{kind:'text',text:'前文'},{kind:'voice',text:'没闭合'}]);
   assert.throws(()=>speechParts('[[wx-voice]][[wx-at:甲]][[/wx-voice]]','group',true),/invalid/);
 });
 test('original mentions, code blocks and total meme limit remain',()=>{

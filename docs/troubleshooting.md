@@ -23,6 +23,8 @@ node "$env:USERPROFILE\.dsh\profiles\desktop\node_modules\local-dsh-wxauto\setup
 
 - **收不到语音**：`receiveVoice` 要是 true，语音识别模型要在 `WhaleData\runtime\voice-data\models` 下（重跑 setup.ps1）。
 - **发不出语音条**：需要 VB-CABLE，还要 BreezeBlue key 和声音 ID；体检会提示缺哪个。
+- **对方收到的语音条是几秒空白**：VB-CABLE 有两端，插件把声音放进 `CABLE Input`，微信要从 `CABLE Output` 录。到 Windows「声音设置 → 输入」把默认录音设备设成 **CABLE Output**（或者在微信设置里把麦克风选成它）。插件不会替你改系统音频设备，「发送成功」只代表按住说话的动作做完了。
+- **语音没发出来但文字到了**：语音合成失败（例如缺参考音频、合成服务没起来）时，那一段会改成文字发出，不会整条丢掉。原因记在 `status.local.json` 的 `lastVoiceFallback` 里。
 
 ## 插件更新后不工作了
 
@@ -48,6 +50,14 @@ $p = "$env:USERPROFILE\.dsh\profiles\desktop\node_modules\local-dsh-wxauto"
 ```
 
 正常时第一段里会有一行 `uia='mmui::MainWindow'`。
+
+## 群里不回 / 群一直是 blocked
+
+群不用手动设置：在群里 @ 她，插件会自动登记这个群、建群会话，并切到原生文字接收。设置页的「减少头像取名操作」按钮一般用不到。
+
+- **不要手改** `WhaleData\config\group-routes.local.json`、`wxauto.local.json` 里的 `groupSessions` / `chatKeys`，也不要手建 `~/.dsh/sessions` 下的会话目录。切到原生文字后，插件会持续核对群的会话 ID 和聊天 ID；和登记的不一致，就会为了安全把这个群停成 `blocked`，不再收消息。
+- 旧版本在主人还没和小鲸私聊过时，建群会话会报 `session/not-found`；新版本已修，更新插件即可。
+- 群已经变成 `blocked`：先把手改过的文件恢复原样，再把 `WhaleData\config\native-group-text\` 移到别处备份，然后完全退出 DSH 再打开。群会先回到界面接收，之后自动切换。
 
 ## 磁盘越来越大
 

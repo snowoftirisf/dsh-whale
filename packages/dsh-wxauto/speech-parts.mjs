@@ -10,8 +10,10 @@ export function speechParts(text, kind, available = false) {
   let start = 0;
   let match;
   while ((match = opening.exec(text)) !== null) {
-    const at = match.index, end = text.indexOf(close, at + match[0].length);
-    if (end < 0) throw Error('unclosed-voice-marker');
+    const at = match.index;
+    let end = text.indexOf(close, at + match[0].length), closeLength = close.length;
+    // A forgotten close marker means "the rest is speech"; dropping the whole reply is worse.
+    if (end < 0) { end = text.length; closeLength = 0; }
     const before=text.slice(start,at);
     if(before.includes('[[wx-voice'))throw Error('invalid-voice-marker');
     parts.push(...outgoingParts(before, kind));
@@ -21,7 +23,7 @@ export function speechParts(text, kind, available = false) {
     if (!content || content.includes('[[') || /\[表情\s*[:：]/.test(content) || content.length > 1500)
       throw Error('invalid-voice-content');
     parts.push({kind:available ? 'voice' : 'text',text:content,...(available&&emotion?{emotion}:{})});
-    start = end + close.length;
+    start = end + closeLength;
     opening.lastIndex=start;
   }
   const tail = text.slice(start);

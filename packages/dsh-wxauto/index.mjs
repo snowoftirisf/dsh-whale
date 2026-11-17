@@ -201,9 +201,12 @@ async function start(ctx) {
     if (!sessionReady.has(id)) {
       const task = (async () => {
         if (route.kind === 'group' && !await harness.sessionExists(id, {signal:abort.signal})) {
-          const source = await harness.getSessionModels(currentSessionId(), {signal:abort.signal});
+          // The owner session only exists after its first delivery; a fresh install keeps DSH's default model.
+          let source = null;
+          try { const owner = currentSessionId(); if (owner) source = await harness.getSessionModels(owner, {signal:abort.signal}); }
+          catch { if (abort.signal.aborted) throw abort.signal.reason; }
           await harness.createSession({sessionId:id, workspace:config.workspace, signal:abort.signal});
-          await harness.selectSessionModel(id, {...source.current,reasoningEffort:'low'}, {signal:abort.signal});
+          if (source?.current) await harness.selectSessionModel(id, {...source.current,reasoningEffort:'low'}, {signal:abort.signal});
           await harness.renameSession(id, `小鲸 · 微信群 · ${route.target}`, {signal:abort.signal});
         }
         const selection = await harness.getSessionModels(id, {signal:abort.signal});
@@ -449,10 +452,15 @@ async function start(ctx) {
       if(!history||!sync||!speech?.available()||config.receiveVoice===false||config.capture?.enabled!==true||config.capture?.includeAudio!==true||config.independentWindows?.enabled===true)
         throw Error('native-voice-dependencies-unavailable');
       const inbox=createNativeVoiceInbox({dataRoot:config.dataRoot,accountId:config.accountId});
-      if(!inbox.status().initialized)throw Error('native-voice-baseline-required');
-      nativeVoiceInbox=inbox;
       nativeVoiceRoutes();
       nativeVoiceIO=nativeVoiceClient({root,dataRoot:config.dataRoot,python:config.python,decoderPython:speechPython});
+      if(!inbox.status().initialized){
+        // First start: voice notes already in these chats are history, never new input.
+        const keys=[...nativeVoiceRoutes().keys()];
+        const baseline=inbox.initialize(await nativeVoiceIO.catalog(keys,{signal:abort.signal}),{nativeChatKeys:keys});
+        report('native-voice-baselined',{nativeVoiceBaselined:baseline.baselined});
+      }
+      nativeVoiceInbox=inbox;
       const [asr,decoder]=await Promise.all([speech.request('status'),nativeVoiceIO.status({signal:abort.signal})]);
       if(asr.asrReady!==true||decoder.decoderReady!==true)throw Error('native-voice-decoder-or-asr-not-ready');
       nativeVoiceProcessor=createNativeVoiceProcessor({inbox,history,isClosed:()=>closed,
@@ -780,21 +788,34 @@ async function start(ctx) {
     const task = sendTail.then(async () => {
       const taskStartedAt=performance.now();
       deliveryStates.set(target,receipt);
-      const choices = speechParts(text, routes.get(target).kind, voiceAvailable());
+      const kind = routes.get(target).kind;
+      let choices;
+      // Broken voice markup degrades to plain text instead of dropping the whole reply.
+      try { choices = speechParts(text, kind, voiceAvailable()); }
+      catch (error) {
+        report('voice-markup-sent-as-text',{lastVoiceFallback:{replyId:id,code:String(error.message).slice(0,80)}});
+        choices = speechParts(String(text||'').replace(/\[\[\/?wx-voice(?::[^\]\r\n]*)?\]\]/g,''), kind, false);
+      }
       const parts = [];
       // Synthesis precedes ALL delivery, so model failures cannot leave half a reply.
       for (const part of choices) {
         if (part.kind === 'voice') {
-          const settings=voiceSettings();
-          const backend=selectedSpeech(settings,speech,emotionalSpeech,cloudSpeech);
-          if(!backend||!voiceAvailable())throw Error('voice-backend-unavailable');
-          if(part.emotion&&!voiceCapabilities().emotion)throw Error('voice-emotion-not-supported');
-          const identity=config.dataRoot?await selectedSongVoice(voiceSettings,config.dataRoot):null;
-          const audio = await measureVoicePreparation({runGpu,queuedAt,taskStartedAt,
-            synthesize:()=>backend.request('synthesize',{text:part.text,...(part.emotion?{emotion:part.emotion}:{})}),
-            observe:timing=>report('voice-prepared',{lastVoicePreparationTiming:{...timing,replyId:id}})});
-          if(identity&&audio.referenceSha256&&audio.referenceSha256!==identity.hash)throw Error('voice-reference-changed');
-          for (const segment of audio.segments ?? [audio]) parts.push({...part,...segment,voiceIdentity:identity?.identity});
+          try {
+            const settings=voiceSettings();
+            const backend=selectedSpeech(settings,speech,emotionalSpeech,cloudSpeech);
+            if(!backend||!voiceAvailable())throw Error('voice-backend-unavailable');
+            if(part.emotion&&!voiceCapabilities().emotion)throw Error('voice-emotion-not-supported');
+            const identity=config.dataRoot?await selectedSongVoice(voiceSettings,config.dataRoot):null;
+            const audio = await measureVoicePreparation({runGpu,queuedAt,taskStartedAt,
+              synthesize:()=>backend.request('synthesize',{text:part.text,...(part.emotion?{emotion:part.emotion}:{})}),
+              observe:timing=>report('voice-prepared',{lastVoicePreparationTiming:{...timing,replyId:id}})});
+            if(identity&&audio.referenceSha256&&audio.referenceSha256!==identity.hash)throw Error('voice-reference-changed');
+            for (const segment of audio.segments ?? [audio]) parts.push({...part,...segment,voiceIdentity:identity?.identity});
+          } catch (error) {
+            // A voice that cannot be made (no reference audio, backend down) is still said, as text.
+            report('voice-sent-as-text',{lastVoiceFallback:{replyId:id,code:String(error.message).slice(0,80)}});
+            parts.push({kind:'text',text:part.text});
+          }
         } else parts.push(part);
       }
       for (const part of parts) {
