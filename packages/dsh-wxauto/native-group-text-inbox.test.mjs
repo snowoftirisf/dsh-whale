@@ -72,6 +72,17 @@ test('catalog scope/budget/duplicates and immutable physical or sender changes r
   assert.deepEqual(fs.readFileSync(f.file),before);
 });
 
+test('re-rendered text of submitted/baseline rows refreshes without replay; other identity changes still reject',t=>{
+  const f=fixture(t);f.baseline(f.catalog([f.make(1)]));f.inbox.enqueue(f.catalog([f.make(1),f.make(2)]));
+  const [claim]=f.inbox.pending();f.inbox.submit([claim.claimId],{requireAllQueued:true});
+  const text={rawText:'sticker with link',renderedText:'sticker with link'};
+  f.inbox.enqueue(f.catalog([f.make(1,text),f.make(2,text)],[],undefined,'snapshot-2'));
+  assert.equal(f.inbox.pending().length,0);assert.equal(f.inbox.status().submitted,1);
+  const before=fs.readFileSync(f.file);
+  assert.throws(()=>f.inbox.enqueue(f.catalog([f.make(1,text),f.make(2,{...text,localId:22})])),/identity-conflict/);
+  assert.deepEqual(fs.readFileSync(f.file),before);
+});
+
 test('explicit delegation is separate from quiet baseline and cannot delegate unresolved or absent IDs',t=>{
   const f=fixture(t);assert.throws(()=>f.baseline(f.catalog([],[f.unresolved(1)]),{delegatedUnreadNativeIds:['wechat-server:1']}),/baseline-invalid/);
   f.baseline(f.catalog([f.make(1),f.make(2)]),{delegatedUnreadNativeIds:['wechat-server:2']});

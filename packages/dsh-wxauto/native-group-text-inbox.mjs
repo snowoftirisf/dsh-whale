@@ -139,7 +139,12 @@ export function createNativeGroupTextInbox({dataRoot,accountId,nativeChatKey,max
             // Keep that exact held claim; do not block unrelated new inputs.
             const withoutNumeric=v=>physical(v).slice(0,-1);
             if(previous.resolution==='unresolved'&&previous.senderNumericId===null&&hash(withoutNumeric(previous))===hash(withoutNumeric(row))){result.ignored++;continue;}
-            fail('identity-conflict');
+            // rawText is rendered by the catalog (stickers, quotes). A renderer upgrade
+            // re-renders rows that were already delivered or baselined; refresh the
+            // text instead of blocking the group. Pending rows stay strict.
+            const withoutText=v=>physical(v).filter((_,i)=>i!==3);
+            if(!['submitted','baseline'].includes(previous.state)||hash(withoutText(previous))!==hash(withoutText(row)))fail('identity-conflict');
+            previous.rawText=row.rawText;changed=true;
           }
           if(previous.resolution==='resolved'&&row.direction==='incoming'&&hash(identity(previous))!==hash(identity(row)))fail('identity-conflict');
           if(previous.resolution==='unresolved'&&row.direction==='incoming'){
