@@ -1,6 +1,6 @@
 import {randomUUID} from 'node:crypto';
 const hex=v=>typeof v==='string'&&/^[a-f0-9]{32}$/.test(v);
-const fields={'group-text-status':[],'group-text-prepare':[],'group-text-abort':['ticket'],'group-text-commit':['ticket','authorityEpoch']};
+const fields={'group-text-status':[],'group-text-prepare':[],'group-text-abort':['ticket'],'group-text-commit':['ticket','authorityEpoch'],'group-text-reset':[]};
 export function groupTextRpcClient({write,routeForGroup,isReady=()=>true,timeoutMs=45000}={}){
   if(typeof write!=='function'||typeof routeForGroup!=='function'||typeof isReady!=='function'||!Number.isSafeInteger(timeoutMs)||timeoutMs<1)throw Error('group-text-client-config-invalid');
   let closed=false;const pending=new Map();

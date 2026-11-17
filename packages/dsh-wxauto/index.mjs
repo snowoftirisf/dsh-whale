@@ -618,9 +618,24 @@ async function start(ctx) {
       isClosed:()=>closed||!ready,report:value=>{report(status.event,{nativeGroupTextCutover:{...value,nativeChatKey:key}});if(value.outcome!=='working'){const capture=cutoverDeferredCapture;cutoverDeferredScan=false;cutoverDeferredCapture=false;queueMicrotask(()=>{if(!closed)void nativeVoicePump({capture});});}}});
     const item={cutover,readiness,publisher,catalogClient};groupTextCutovers.set(key,item);return item;
   }
-  registerGroupTextCutover(ctx,{groups:()=>nativeGroupKeys().map(key=>({nativeChatKey:key,target:groupRouteForKey(key).target})),status:async key=>{const c=groupCutoverFor(key),job=c.cutover.status();if(['working','unknown','active'].includes(job.outcome))return job;
-    const authority=await groupTextRequest('group-text-status',{nativeChatKey:key}),quiet=await c.readiness.inspect({settle:false});return {...job,authorityMode:authority.mode==='ui'?'ui':authority.mode==='native'?'native':'blocked',nativeActive:groupTextRuntime.active(key),canActivate:authority.mode==='ui'&&quiet.quiet&&!c.publisher.exists(),quiet:quiet.counts,code:quiet.code};},
-    activate:key=>groupCutoverFor(key).cutover.activate()});
+  registerGroupTextCutover(ctx,{groups:()=>nativeGroupKeys().map(key=>({nativeChatKey:key,target:groupRouteForKey(key).target})),status:async key=>{const c=groupCutoverFor(key),job=c.cutover.status();if(['working','active'].includes(job.outcome))return job;
+    // Why a group is blocked: the worker's reason first, then the parent's own.
+    const parentReason=()=>groupTextRuntime.active(key)?undefined:groupTextRuntime.blockedReason(key)??undefined;
+    if(job.outcome==='unknown'){let authority=null;try{authority=await groupTextRequest('group-text-status',{nativeChatKey:key});}catch{}
+      return {...job,blockedReason:authority?.blockedReason??parentReason()??'cutover-outcome-unknown'};}
+    const authority=await groupTextRequest('group-text-status',{nativeChatKey:key}),quiet=await c.readiness.inspect({settle:false});return {...job,authorityMode:authority.mode==='ui'?'ui':authority.mode==='native'?'native':'blocked',nativeActive:groupTextRuntime.active(key),canActivate:authority.mode==='ui'&&quiet.quiet&&!c.publisher.exists(),quiet:quiet.counts,code:quiet.code,blockedReason:authority.blockedReason??(authority.mode==='ui'?undefined:parentReason())};},
+    activate:key=>groupCutoverFor(key).cutover.activate(),
+    // Owner reset of a blocked group: the worker moves its native state aside, then the parent forgets it.
+    reset:async key=>{
+      const item=groupTextCutovers.get(key);
+      if(item?.cutover.status().outcome==='working')throw Error('group-text-cutover-in-progress');
+      const result=await groupTextRequest('group-text-reset',{nativeChatKey:key});
+      item?.cutover.close();groupTextCutovers.delete(key);groupTextRuntime.forget(key);
+      try{await groupTextRuntime.restore();}catch{}
+      report('group-text-reset',{nativeGroupText:groupTextRuntime.status()});
+      return {reset:true,authorityMode:result.mode==='ui'?'ui':result.mode==='native'?'native':'blocked',nativeActive:groupTextRuntime.active(key),canActivate:false,
+        ...(result.blockedReason?{blockedReason:result.blockedReason}:{})};
+    }});
   const deferPreparedFriend=async plan=>{
     if(plan.action!=='add_friend')return false;
     try{const selected=await getPreparedPlan();return selected.planId===plan.id&&selected.hash===plan.hash&&!!selected.expectedProfileName;}

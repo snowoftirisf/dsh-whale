@@ -9,7 +9,8 @@ export function createNativeGroupTextRuntime({config,root,requestGroup,history,r
  if(!config||[requestGroup,routeForGroup,groupKeys,enqueue].some(f=>typeof f!=='function'))throw Error('group-text-runtime-config-invalid');
  let closed=false,restoreWork=null;const entries=new Map();
  const route=key=>{try{const r=routeForGroup(key);return keyOk(key)&&r?.kind==='group'&&r.active!==false&&typeof r.target==='string'&&r.target&&typeof r.sessionId==='string'&&r.sessionId?r:null;}catch{return null;}};
- const revoke=(key,mode)=>{const e=entries.get(key);e?.processor?.close();e?.client?.close();entries.set(key,{...e,mode,processor:null,client:null,epoch:e?.seenEpoch??null});};
+ // reason is a short public code shown to the owner when a group is blocked.
+ const revoke=(key,mode,reason=null)=>{const e=entries.get(key);e?.processor?.close();e?.client?.close();entries.set(key,{...e,mode,processor:null,client:null,epoch:e?.seenEpoch??null,reason:mode!=='blocked'?null:reason==='awaiting-restore'&&e?.mode==='blocked'&&e.reason?e.reason:reason??'unknown'});};
  const canonical=(e,r)=>!!r&&typeof r.chatId==='string'&&!!r.chatId&&e?.seenSession===r.sessionId&&e?.seenChat===r.chatId;
  const active=key=>{const e=entries.get(key),r=route(key);return !closed&&!isClosed()&&canonical(e,r)&&e?.mode==='native'&&!!e.processor;};
  const remember=(key,r,{sticky=false,epoch=null}={})=>{
@@ -26,19 +27,19 @@ export function createNativeGroupTextRuntime({config,root,requestGroup,history,r
   // Only a matching trusted worker envelope may establish a cold guard.
   // A missing RPC / foreign account is not evidence of native authority.
   const bound=!!r&&v?.version===1&&v.accountId===config.accountId&&v.nativeChatKey===key&&v.target===r.target;
-  if(!bound){revoke(key,old?.guarded?'blocked':'unavailable');return false;}
+  if(!bound){revoke(key,old?.guarded?'blocked':'unavailable','worker-status-unbound');return false;}
   if(v.readsStopped===true||v.mode==='blocked'){
-    remember(key,r,{sticky:true,epoch:hex(v.authorityEpoch)?v.authorityEpoch:null});revoke(key,'blocked');return false;
+    remember(key,r,{sticky:true,epoch:hex(v.authorityEpoch)?v.authorityEpoch:null});revoke(key,'blocked','worker-'+(/^[a-z0-9-]{1,80}$/.test(v.blockedReason??'')?v.blockedReason:'blocked'));return false;
   }
-  if(!['ui','preparing','native'].includes(v.mode)){revoke(key,old?.guarded?'blocked':'unavailable');return false;}
+  if(!['ui','preparing','native'].includes(v.mode)){revoke(key,old?.guarded?'blocked':'unavailable','worker-mode-unknown');return false;}
   if(old?.stickyGuard&&!canonical(old,r)){
-    remember(key,r,{sticky:true});revoke(key,'blocked');return false;
+    remember(key,r,{sticky:true});revoke(key,'blocked','route-session-or-chat-changed');return false;
   }
   if(old?.seenEpoch&&(v.mode!=='native'||v.authorityEpoch!==old.seenEpoch)){
-    revoke(key,'blocked');return false;
+    revoke(key,'blocked',v.mode!=='native'?'native-state-regressed':'native-epoch-changed');return false;
   }
   if(v.mode!=='native'){
-    if(old?.stickyGuard){remember(key,r,{sticky:true});revoke(key,'blocked');return false;}
+    if(old?.stickyGuard){remember(key,r,{sticky:true});revoke(key,'blocked','native-state-regressed');return false;}
     revoke(key,v.mode);const current=entries.get(key);
     current.guarded=v.mode==='preparing';if(current.guarded)remember(key,r);
     return false;
@@ -46,10 +47,10 @@ export function createNativeGroupTextRuntime({config,root,requestGroup,history,r
   // Even malformed/missing epoch in an otherwise bound native reply is not a
   // license to replay old UI messages. Restore may later verify a real epoch.
   remember(key,r,{sticky:true,epoch:hex(v.authorityEpoch)?v.authorityEpoch:null});
-  if(!hex(v.authorityEpoch)||typeof r.chatId!=='string'||!r.chatId){revoke(key,'blocked');return false;}
+  if(!hex(v.authorityEpoch)||typeof r.chatId!=='string'||!r.chatId){revoke(key,'blocked','native-authority-invalid');return false;}
   // Preserve evidence of an immutable worker authority even when parent restore
   // cannot verify its inbox yet. A later UI response cannot silently revoke it.
-  if(!old?.processor&&!allow){revoke(key,'blocked');return false;}
+  if(!old?.processor&&!allow){revoke(key,'blocked','awaiting-restore');return false;}
   try{
    if(!old?.processor){
     const inbox=inboxFactory({dataRoot:config.dataRoot,accountId:config.accountId,nativeChatKey:key}),state=inbox.status();
@@ -60,19 +61,22 @@ export function createNativeGroupTextRuntime({config,root,requestGroup,history,r
      activeAuthority:()=>active(key)?{active:true,accountId:config.accountId,nativeChatKey:key,authorityEpoch:e.epoch}:null,isClosed:()=>closed||isClosed(),report});
    }
    entries.get(key).mode='native';return true;
-  }catch{revoke(key,'blocked');try{report('group-text-runtime-restore-unverified');}catch{}return false;}
+  }catch{revoke(key,'blocked','inbox-unverified');try{report('group-text-runtime-restore-unverified');}catch{}return false;}
  }
  const runtime={active,anyActive:()=>[...entries.keys()].some(active),getProcessor:key=>active(key)?entries.get(key).processor:null,
   handleStatus:(key,value)=>apply(key,value),
   restore(){if(!restoreWork)restoreWork=(async()=>{const keys=groupKeys();if(!Array.isArray(keys)||keys.length>256||new Set(keys).size!==keys.length||keys.some(k=>!keyOk(k)))throw Error('group-text-routes-invalid');
     for(const key of entries.keys())if(!keys.includes(key))revoke(key,'blocked');
-    for(const key of keys){try{apply(key,await requestGroup('group-text-status',{nativeChatKey:key}),true);}catch{revoke(key,entries.get(key)?.guarded?'blocked':'unavailable');}}
+    for(const key of keys){try{apply(key,await requestGroup('group-text-status',{nativeChatKey:key}),true);}catch{revoke(key,entries.get(key)?.guarded?'blocked':'unavailable','worker-status-unavailable');}}
     return runtime.status();})().finally(()=>restoreWork=null);return restoreWork;},
   async refresh(){let buffered=0,failed=0;for(const [key,e]of entries){if(!active(key))continue;try{const r=await e.processor.refresh();buffered+=r.buffered??0;failed+=r.failed??0;}catch{failed++;}}return {buffered,failed};},
   acceptsHint:e=>e?.event==='native-group-text-observed'&&e.kind==='group'&&active(e.nativeChatKey)&&route(e.nativeChatKey)?.target===e.target&&entries.get(e.nativeChatKey).epoch===e.authorityEpoch,
   guardedTargets:()=>new Set([...entries].filter(([,e])=>e.guarded).flatMap(([key,e])=>[
     ...(e.seenTargets??(e.seenTarget?[e.seenTarget]:[])),route(key)?.target].filter(Boolean))),
-  status:()=>({version:1,recoveryGuardVersion:2,active:[...entries.keys()].filter(active).length,groups:[...entries].map(([nativeChatKey,e])=>({nativeChatKey,mode:e.mode,active:active(nativeChatKey),authorityEpoch:e.epoch??null}))}),
+  status:()=>({version:1,recoveryGuardVersion:2,active:[...entries.keys()].filter(active).length,groups:[...entries].map(([nativeChatKey,e])=>({nativeChatKey,mode:e.mode,active:active(nativeChatKey),authorityEpoch:e.epoch??null,...(e.mode==='blocked'?{blockedReason:e.reason??'unknown'}:{})}))}),
+  blockedReason:key=>{const e=entries.get(key);return e?.mode==='blocked'?e.reason??'unknown':null;},
+  // Owner reset only: the worker has already moved this group's native state aside.
+  forget(key){if(entries.has(key)){revoke(key,'unavailable');entries.delete(key);}},
   close(){closed=true;for(const key of entries.keys())revoke(key,'closed');}};
  return Object.freeze(runtime);
 }

@@ -59,7 +59,7 @@ class NativeGroupTextAdmissionAuthority(NativeGroupTextAuthority):
                 inbox,_=self._inbox(self.epoch)
                 self._admission=self._admission_record(marker,inbox)
             except Exception:
-                self.mode='blocked'
+                self._blocked('admit-restore-unverified')
                 raise NativeGroupTextAuthorityError('native-group-text-admit-restore-unverified')from None
         return self.status()
 
@@ -78,7 +78,7 @@ class NativeGroupTextAdmissionAuthority(NativeGroupTextAuthority):
                     self._admission=copy.deepcopy(a)
                     value['admission']={k:a[k]for k in ('rawClaimId','rawClaimHash','snapshotId')}
             except Exception:
-                self.mode='blocked';self._admission=None;value=super().status()
+                self._blocked('admission-marker-changed');self._admission=None;value=super().status()
         return value
 
     def _validate_adoption(self,source,epoch,inbox,catalog):
@@ -157,7 +157,7 @@ class NativeGroupTextAdmissionAuthority(NativeGroupTextAuthority):
             self.ticket=uuid.uuid4().hex;self.prepared_at_ms=inbox['cutoverAtMs'];self._prepared_settings=settings
             try:self._acquire_lease();self._transition('preparing');self.mode='preparing'
             except Exception:
-                self.mode='blocked';raise NativeGroupTextAuthorityError('native-group-text-admit-lease-unknown')from None
+                self._blocked('admit-lease-unknown');raise NativeGroupTextAuthorityError('native-group-text-admit-lease-unknown')from None
             try:
                 revalidate_pending_text_admission_source(self.config,source);self._verify_ui(ui_proof,source)
                 need(self.settings()==settings and _read(self.paths()[2])[1]==token,'source-changed')
@@ -173,7 +173,7 @@ class NativeGroupTextAdmissionAuthority(NativeGroupTextAuthority):
                 need(_read(self.paths()[1])[0]==value and _read(self.paths()[2])[1]==token,'commit-readback-failed')
                 self._release_lease()
             except Exception:
-                self.mode='blocked';raise NativeGroupTextAuthorityError('native-group-text-admit-commit-unknown')from None
+                self._blocked('admit-commit-unknown');raise NativeGroupTextAuthorityError('native-group-text-admit-commit-unknown')from None
             self._admission=admission;self._active_settings=settings;self._prepared_settings=None
             self.mode,self.epoch,self.ticket='native',epoch,None;self.prepared_at_ms=None
             return self.status()

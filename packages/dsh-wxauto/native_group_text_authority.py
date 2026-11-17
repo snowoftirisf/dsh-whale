@@ -35,6 +35,14 @@ def need(value, code):
         raise NativeGroupTextAuthorityError('native-group-text-authority-' + code)
 
 
+def reason_of(error, default):
+    """A short public reason code; never a path, name or message text."""
+    text=str(error) if isinstance(error,NativeGroupTextAuthorityError) else ''
+    for prefix in ('native-group-text-authority-','native-group-text-'):
+        if text.startswith(prefix):text=text[len(prefix):];break
+    return text if re.fullmatch('[a-z0-9-]{1,80}',text or '') else default
+
+
 def group_text_directory(config, key):
     need(isinstance(key,str) and KEY_RE.fullmatch(key), 'group-key-invalid')
     suffix=hashlib.sha256(key.encode('utf8')).hexdigest()[:32]
@@ -82,6 +90,11 @@ class NativeGroupTextAuthority:
         self._active_settings=None
         self._lease_fd=None
         self._lease_token=None
+        self.blocked_reason=None
+
+    def _blocked(self, reason):
+        self.mode='blocked'
+        if self.blocked_reason is None:self.blocked_reason=reason
 
     def paths(self):
         folder=group_text_directory(self.config,self.key)
@@ -102,10 +115,11 @@ class NativeGroupTextAuthority:
                 current=self.settings()
                 need(self._active_settings is not None and all(current[k]==self._active_settings[k]
                     for k in('accountId','nativeChatKey','captureAccountUsername','captureSourceId','sessionId','chatId')),'route-changed')
-            except Exception:self.mode='blocked'
+            except Exception as error:self._blocked(reason_of(error,'route-changed'))
         value={'version':1,'accountId':self.config.get('accountId'),'nativeChatKey':self.key,
             'mode':self.mode,'authorityEpoch':self.epoch,'ticket':self.ticket,
             'dirty':self.dirty,'deferred':len(self.deferred),'readsStopped':self.mode=='blocked'}
+        if self.mode=='blocked':value['blockedReason']=self.blocked_reason or 'unknown'
         try:value['target']=self.route_reader(self.config,self.key)['target']
         except Exception:value['routeInactive']=True
         if self.mode=='preparing':value['preparedAtMs']=self.prepared_at_ms
@@ -162,7 +176,7 @@ class NativeGroupTextAuthority:
     def close(self):
         """An unknown preparation keeps its lock and journal for recovery."""
         if self._lease_fd is not None:os.close(self._lease_fd);self._lease_fd=None
-        if self.mode=='preparing':self.mode='blocked'
+        if self.mode=='preparing':self._blocked('closed-while-preparing')
 
     def _inbox(self, epoch, *, baseline=False):
         _,_,file,_=self.paths();value,token=_read(file)
@@ -200,8 +214,8 @@ class NativeGroupTextAuthority:
                 if inbox['revision']==1:need(_read(self.paths()[2])[1][0]==body['initialInboxSha256'],'inbox-mismatch')
                 self._active_settings=settings
                 self.mode,self.epoch='native',body['authorityEpoch'];return self.status()
-            except Exception:
-                self.mode='blocked'
+            except Exception as error:
+                self._blocked('restore-'+reason_of(error,'unverified'))
                 raise NativeGroupTextAuthorityError('native-group-text-authority-restore-unverified')from None
 
     def prepare(self):
@@ -209,7 +223,7 @@ class NativeGroupTextAuthority:
             need(self.mode=='ui','ui-required');self._prepared_settings=self.settings()
             self.ticket,self.prepared_at_ms,self.dirty=uuid.uuid4().hex,self._now(),False
             try:self._acquire_lease();self._transition('preparing')
-            except Exception:self.mode='blocked';raise
+            except Exception:self._blocked('prepare-failed');raise
             self.mode='preparing';return self.status()
 
     def route_event(self,event):
@@ -227,7 +241,7 @@ class NativeGroupTextAuthority:
             if self.mode=='native':return {'action':'hint','authorityEpoch':self.epoch}
             if self.mode=='preparing':
                 self.dirty=True
-                if len(self.deferred)>=self.max_deferred:self.mode='blocked';return {'action':'blocked'}
+                if len(self.deferred)>=self.max_deferred:self._blocked('too-many-deferred');return {'action':'blocked'}
                 self.deferred.append(copy.deepcopy(event));return {'action':'deferred'}
             return {'action':'blocked'}
 
@@ -241,7 +255,7 @@ class NativeGroupTextAuthority:
         with self._lock:
             need(self.mode=='preparing' and self._abort_pending and ticket==self.ticket and drained==len(self.deferred),'abort-unverified')
             try:self._transition('ui',drained=drained);self._release_lease()
-            except Exception:self.mode='blocked';raise
+            except Exception:self._blocked('abort-failed');raise
             self.mode,self.ticket,self.prepared_at_ms,self.dirty='ui',None,None,False
             self.deferred=[];self._abort_pending=False
             self._prepared_settings=None
@@ -288,7 +302,7 @@ class NativeGroupTextAuthority:
                 need(_read(file)[0]==value and _read(inbox_file)[1]==token,'commit-readback-failed')
                 self._release_lease()
             except Exception:
-                self.mode='blocked';raise NativeGroupTextAuthorityError('native-group-text-authority-commit-unknown')from None
+                self._blocked('commit-unknown');raise NativeGroupTextAuthorityError('native-group-text-authority-commit-unknown')from None
             self._active_settings=settings;self._prepared_settings=None
             self.mode,self.epoch,self.ticket='native',epoch,None;self.prepared_at_ms=None
             return self.status()

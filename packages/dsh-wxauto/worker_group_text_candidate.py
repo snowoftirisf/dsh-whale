@@ -3,7 +3,7 @@
 Only committed authority authorizes pre-SDK text observations. Deferred UI
 messages stay exact; uncertain shutdown/abort retains private recovery evidence.
 """
-import copy,hashlib,os,re,uuid
+import copy,hashlib,os,re,time,uuid
 from itertools import islice
 from pathlib import Path
 from attachment_policy import local_path
@@ -13,7 +13,7 @@ from native_group_text_admission_authority import NativeGroupTextAdmissionAuthor
 from message_watch import SessionGate
 
 VERSION=1
-OPS=frozenset('group-text-'+x for x in ('status','prepare','abort','commit','admit'))
+OPS=frozenset('group-text-'+x for x in ('status','prepare','abort','commit','admit','reset'))
 KEY=re.compile(r'wechat:[A-Za-z0-9_-]{1,256}@chatroom')
 HEX=re.compile('[a-f0-9]{32}')
 
@@ -24,6 +24,7 @@ class WorkerGroupTextBridge:
         self.publish_batch=publish_batch
         self.factory,self.route_provider=controller_factory,route_provider
         self.controllers={};self.targets={};self.deferred={};self.stopped=set();self.saved=set();self.closed=False
+        self.reasons={}
         self.bindings={}
         self.previews={}
         self.suspended=set()
@@ -37,6 +38,10 @@ class WorkerGroupTextBridge:
             key,target=proof['nativeChatKey'],proof.get('target')
             if target:self.targets[target]=key
         self.sync_routes()
+
+    def _stop(self,key,reason):
+        """Stop reads for one group and remember the first reason (shown to the owner)."""
+        self.stopped.add(key);self.reasons.setdefault(key,reason)
 
     def _inventory(self):
         """One bounded passive inventory, distinguishing archives from uncertainty."""
@@ -168,19 +173,20 @@ class WorkerGroupTextBridge:
                     self.bindings[key]=None
                     try:controller.restore()
                     except Exception:pass
-                    self.stopped.add(key)
+                    self._stop(key,'route-inactive-with-native-state')
             # Revoked routes remain blocked; never revert an uncertain native source to UI.
             for key in set(self.controllers)-set(active):
-                if key in self.protected_keys or self.controllers[key].status().get('mode')!='ui':self.stopped.add(key)
+                if key in self.protected_keys or self.controllers[key].status().get('mode')!='ui':self._stop(key,'route-revoked')
             for key,route in active.items():
                 if key not in self.controllers:
                     controller=self.factory(self.config,key);self.controllers[key]=controller;self.deferred[key]=[]
                     self.bindings[key]=(route['sessionId'],route['chatId'])
                     try:controller.restore()
-                    except Exception:self.stopped.add(key)
-                if self.bindings[key]!=(route['sessionId'],route['chatId']):self.stopped.add(key)
+                    except Exception:self._stop(key,self.controllers[key].status().get('blockedReason')or'restore-failed')
+                if self.bindings[key]!=(route['sessionId'],route['chatId']):self._stop(key,'route-session-or-chat-changed')
                 if self.controllers[key].status().get('mode')!='ui':self.protected_keys.add(key)
-                if self.controllers[key].status().get('mode')=='blocked' or key in self.pending_recovery_keys:self.stopped.add(key)
+                if self.controllers[key].status().get('mode')=='blocked':self._stop(key,self.controllers[key].status().get('blockedReason')or'authority-blocked')
+                if key in self.pending_recovery_keys:self._stop(key,'pending-recovery-files')
             # Publish the new name map together, retaining blocked revoked routes
             # but removing old labels of a trusted same-key/session/chat rename.
             updated={t:k for t,k in self.targets.items() if k not in active}
@@ -195,10 +201,11 @@ class WorkerGroupTextBridge:
                     controller=self.factory(self.config,key);self.controllers[key]=controller;self.deferred[key]=[];self.bindings[key]=None
                     try:controller.restore()
                     except Exception:pass
-                    self.stopped.add(key)
+                    self._stop(key,'registry-unverified')
             unmapped=any(r['nativeChatKey']not in self.targets.values()for r in self.inventory)
             self.registry_failed=self.inventory_unknown or unmapped
-            self.stopped.update(k for k in self.controllers if k in self.protected_keys or self.controllers[k].status().get('mode')!='ui')
+            for k in self.controllers:
+                if k in self.protected_keys or self.controllers[k].status().get('mode')!='ui':self._stop(k,'registry-unverified')
             if self.registry_failed or self.stopped:self.emit({'event':'group-text-blocked','code':'group-text-registry-unverified'})
             return False
 
@@ -208,9 +215,13 @@ class WorkerGroupTextBridge:
             targets=[t for t,k in self.targets.items()if k==key]
             value['target']=targets[0]if len(targets)==1 else None
         if key in self.suspended:value['uiMonitoringSuspended']=True
+        reason=('registry-unverified'if self.registry_failed else'worker-closed'if self.closed else
+            self.reasons.get(key,'stopped')if key in self.stopped else'route-inactive'if value.get('routeInactive')is True else value.get('blockedReason'))
         if (key in self.stopped or self.closed or self.registry_failed
                 or value.get('routeInactive')is True and (key in self.protected_keys or value.get('mode')!='ui')):
             value.update(mode='blocked',readsStopped=True)
+        if value.get('mode')=='blocked':value['blockedReason']=reason or 'unknown'
+        else:value.pop('blockedReason',None)
         return {'version':VERSION,'accountId':self.config.get('accountId'),'nativeChatKey':key,
                 **value,'workerInstanceId':self.instance_id}
 
@@ -252,8 +263,37 @@ class WorkerGroupTextBridge:
         self.saved.add(key)
         return file.relative_to(Path(self.config['dataRoot'])).as_posix()
 
+    def reset(self,key):
+        """Owner-requested reset of one blocked group back to UI receiving.
+
+        The group's whole native folder (authority, inbox, transition, deferred UI
+        messages, admission journals) is moved aside, never deleted, then the
+        route is rebuilt from the registry exactly like a first start.
+        """
+        if self.registry_failed:raise RuntimeError('registry-unverified')
+        if self._status(key).get('mode')!='blocked':raise RuntimeError('reset-not-blocked')
+        controller=self.controllers[key]
+        if self.deferred.get(key) and key not in self.saved:self._persist(key,self.deferred[key])
+        close=getattr(controller,'close',None)
+        if callable(close):close()
+        folder=local_path(controller.paths()[0])
+        archived=None
+        if os.path.lexists(folder):
+            root=local_path(absolute_data_path('config/native-group-text-reset',root=self.config['dataRoot']))
+            root.mkdir(parents=True,exist_ok=True)
+            target=local_path(root/(folder.name+'-'+time.strftime('%Y%m%dT%H%M%SZ',time.gmtime())+'-'+uuid.uuid4().hex[:8]))
+            try:os.replace(folder,target)
+            except OSError:raise RuntimeError('reset-failed') from None
+            archived=target.relative_to(Path(self.config['dataRoot'])).as_posix()
+        for values in (self.stopped,self.protected_keys,self.pending_recovery_keys,self.saved):values.discard(key)
+        for values in (self.controllers,self.deferred,self.bindings,self.previews,self.registered_ui_handoffs,self.reasons):values.pop(key,None)
+        self.inventory=[r for r in self.inventory if r['nativeChatKey']!=key]
+        self.sync_routes()
+        self.emit({'event':'group-text-reset','nativeChatKey':key,'archive':archived})
+        return archived
+
     def _block(self,key,events):
-        self.stopped.add(key)
+        self._stop(key,'authority-blocked')
         self.deferred[key]=copy.deepcopy(events)
         self.saved.discard(key)
         try:
@@ -325,15 +365,18 @@ class WorkerGroupTextBridge:
         try:
             op=command.get('op');extras={'group-text-status':set(),'group-text-prepare':set(),
                 'group-text-abort':{'ticket'},'group-text-commit':{'ticket','authorityEpoch'},
-                'group-text-admit':{'claimId','claimHash','authorityEpoch'}}
+                'group-text-admit':{'claimId','claimHash','authorityEpoch'},'group-text-reset':set()}
             if op not in OPS or set(command)!={'op','id','target','nativeChatKey'}|extras[op]:raise RuntimeError('request-invalid')
             if not isinstance(command['id'],str) or not command['id']:raise RuntimeError('request-invalid')
             if any(not isinstance(command[k],str)or not re.fullmatch('[a-f0-9]{64}'if k=='claimHash'else'[a-f0-9]{32}',command[k])for k in extras[op]):raise RuntimeError('request-invalid')
             self.sync_routes();key=command['nativeChatKey'];target=command['target']
             if self.targets.get(target)!=key or key not in self.controllers:raise RuntimeError('route-invalid')
-            if (key in self.stopped or self.registry_failed or key in self.suspended and op!='group-text-admit') and op!='group-text-status':raise RuntimeError('blocked')
-            controller=self.controllers[key]
-            if op=='group-text-admit':
+            if (key in self.stopped or self.registry_failed or key in self.suspended and op!='group-text-admit') and op not in ('group-text-status','group-text-reset'):raise RuntimeError('blocked')
+            controller=self.controllers[key];archived=None
+            if op=='group-text-reset':
+                if delivery_active or independent:raise RuntimeError('worker-busy')
+                archived=self.reset(key)
+            elif op=='group-text-admit':
                 if independent:raise RuntimeError('worker-busy')
                 if delivery_active:
                     # A correlated negative acknowledgement, strictly before
@@ -366,7 +409,10 @@ class WorkerGroupTextBridge:
                         self._block(key,events[index:]);raise RuntimeError('blocked')
                 controller.finish_abort(command['ticket'],drained);self.deferred[key]=[]
                 self.previews.pop(key,None)
-            value=self._status(key)
+            value=(self._status(key)if key in self.controllers else
+                {'version':VERSION,'accountId':self.config.get('accountId'),'nativeChatKey':key,'mode':'ui','target':target,
+                 'authorityEpoch':None,'ticket':None,'dirty':False,'deferred':0,'readsStopped':False,'workerInstanceId':self.instance_id})
+            if op=='group-text-reset':value['resetArchive']=archived
             if op=='group-text-status':
                 value['admitReady']=(not delivery_active and not independent and value.get('mode')=='ui'
                     and key in self.suspended and key not in self.stopped and not self.registry_failed
@@ -376,7 +422,7 @@ class WorkerGroupTextBridge:
             key=command.get('nativeChatKey')
             if key in self.controllers and self.controllers[key].status().get('mode')=='blocked' and key not in self.stopped:
                 self._block(key,self.deferred[key])
-            code=str(error)if type(error)is RuntimeError and str(error)in {'request-invalid','route-invalid','blocked','worker-busy','prepare-not-quiet','deferrals-unverified'}else 'operation-denied'
+            code=str(error)if type(error)is RuntimeError and str(error)in {'request-invalid','route-invalid','blocked','worker-busy','prepare-not-quiet','deferrals-unverified','reset-not-blocked','registry-unverified','reset-failed'}else 'operation-denied'
             result['code']='group-text-'+code
         self.emit(result);return result
 

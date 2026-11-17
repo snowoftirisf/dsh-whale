@@ -57,7 +57,9 @@ $p = "$env:USERPROFILE\.dsh\profiles\desktop\node_modules\local-dsh-wxauto"
 
 - **不要手改** `WhaleData\config\group-routes.local.json`、`wxauto.local.json` 里的 `groupSessions` / `chatKeys`，也不要手建 `~/.dsh/sessions` 下的会话目录。切到原生文字后，插件会持续核对群的会话 ID 和聊天 ID；和登记的不一致，就会为了安全把这个群停成 `blocked`，不再收消息。
 - 旧版本在主人还没和小鲸私聊过时，建群会话会报 `session/not-found`；新版本已修，更新插件即可。
-- 群已经变成 `blocked`：先把手改过的文件恢复原样，再把 `WhaleData\config\native-group-text\` 移到别处备份，然后完全退出 DSH 再打开。群会先回到界面接收，之后自动切换。
+- 群已经变成 `blocked`：设置页 → 群聊文字接收 → 选中这个群 → 「读取群接收状态」，会显示**被停的原因**（例如「会话或聊天编号和切换时登记的不一致」）。先按原因处理（比如把手改过的文件恢复原样），再点「**复位该群**」：这个群的原生接收记录会整体移到 `WhaleData\config\native-group-text-reset\` 备份（不删除），群回到界面接收，之后在群里 @ 她会重新自动切换。
+- 如果原因是「群登记文件读不懂」（`registry-unverified`），复位按钮会拒绝：这时要先修好 `group-routes.local.json`，或者把整个 `WhaleData\config\native-group-text\` 移走备份后完全退出 DSH 再打开。
+- 提 issue 时把原因代码（括号里那串英文）一起贴上。
 
 ## 磁盘越来越大
 

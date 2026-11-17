@@ -7,6 +7,21 @@ window.__ModuleLoader__.load({id:'local-dsh-wxauto',factory:require=>{
   const cutoverPath='/api/local-dsh-wxauto/owner-text-cutover';
   const groupCutoverPath='/api/local-dsh-wxauto/group-text-cutover',groupRoutesPath='/api/local-dsh-wxauto/group-text-routes';
   const validGroupKey=key=>typeof key==='string'&&/^wechat:[A-Za-z0-9_-]{1,256}@chatroom$/.test(key);
+  // Plain-language reason for a blocked group; the code is kept for logs and issues.
+  const blockedReasons=[
+    [/route-(session-or-chat-)?changed/,'这个群的会话或聊天编号和切换时登记的不一致（常见原因：手改过 group-routes.local.json、groupSessions 或会话目录）'],
+    [/registry-unverified/,'群登记文件 group-routes.local.json 或 native-group-text 目录读不懂'],
+    [/pending-recovery-files/,'上次切换中途留下了待恢复的消息文件'],
+    [/route-(revoked|inactive)/,'这个群已不在授权列表里，但还留着原生接收记录'],
+    [/commit-unknown|lease-unknown/,'切换写入的结果不确定'],
+    [/restore|marker-changed|inbox-unverified|native-(epoch-changed|state-regressed|authority-invalid)/,'重启后核对原生接收记录失败'],
+    [/closed-while-preparing/,'切换进行到一半时插件被关闭'],
+    [/too-many-deferred/,'切换期间积压的群消息太多'],
+    [/authority-blocked/,'读取已停止，暂存的群消息已保存到恢复文件'],
+    [/cutover-outcome-unknown/,'切换结果未知'],
+  ];
+  const blockedReasonText=code=>{if(typeof code!=='string'||!code)return '';
+    const found=blockedReasons.find(([pattern])=>pattern.test(code));return '原因：'+(found?found[1]:'未归类')+'（'+code+'）。';};
   function createObservationTransport(globals=globalThis){
     const location=globals.location;
     const local=['http:','https:'].includes(location?.protocol)&&['127.0.0.1','localhost','[::1]'].includes(location.hostname);
@@ -45,6 +60,7 @@ window.__ModuleLoader__.load({id:'local-dsh-wxauto',factory:require=>{
       },
       groupTextStatus:async(key,{signal}={})=>request(groupCutoverPath,groupArgs(key),signal),
       activateGroupText:async key=>request(groupCutoverPath+'/activate',groupArgs(key)),
+      resetGroupText:async key=>request(groupCutoverPath+'/reset',groupArgs(key)),
       preparedPlan:()=>request(planPath),
       requestApproval:async plan=>request(approvalPath,planArgs(plan)),
       initialAcceptance:async plan=>request(acceptancePath,planArgs(plan)),
@@ -109,10 +125,28 @@ window.__ModuleLoader__.load({id:'local-dsh-wxauto',factory:require=>{
       if(!value||!['ui','native','blocked'].includes(value.authorityMode))throw Error('group-text-cutover-result-invalid');
       setGroupState({...value,nativeChatKey:key});
       if(value.outcome==='unknown'){
-        unknownGroup(key);setGroupMessage('该群切换结果未知，不会自动重试或重置；可以继续读取状态。');
+        unknownGroup(key);setGroupMessage('该群切换结果未知，不会自动重试。'+blockedReasonText(value.blockedReason)+'确认原因后可以点「复位该群」回到界面接收。');
+      }else if(value.authorityMode==='blocked'){
+        setGroupMessage('该群接收状态受阻，已停止读取。'+blockedReasonText(value.blockedReason)+'处理好原因后可以点「复位该群」回到界面接收。');
+      }else if(value.authorityMode==='native'&&value.nativeActive===false&&value.blockedReason){
+        setGroupMessage('后台已是原生接收，但插件这边没有接上。'+blockedReasonText(value.blockedReason)+'可以点「复位该群」回到界面接收。');
       }else if(value.authorityMode==='native')setGroupMessage('该群已使用原生文字接收；仍需一条新消息验证实际收发。');
       else if(value.outcome==='aborted'||value.outcome==='refused')setGroupMessage('本次未确认启用，请先重新读取该群状态。');
-      else setGroupMessage(value.authorityMode==='ui'?'该群当前由界面接收文字；状态允许时可减少头像取名操作。':'该群接收状态受阻，请先检查，不要重复切换。');
+      else setGroupMessage('该群当前由界面接收文字；状态允许时可减少头像取名操作。');
+    }
+    async function resetGroupText(){
+      const key=groupKey;
+      if(groupAction.current||!trustedGroups.some(row=>row.nativeChatKey===key))return;
+      groupAction.current=true;setBusy(true);groupPollAbort.current=null;
+      setGroupMessage('正在复位该群：原生接收记录会移到 WhaleData 下的 config/native-group-text-reset 备份，不会删除……');
+      try{
+        const value=await transport.current.resetGroupText(key);if(!mounted.current)return;
+        if(value?.authorityMode==='ui'){
+          groupUnsafe.current.delete(key);setGroupUnknown(old=>(Array.isArray(old)?old:[]).filter(k=>k!==key));
+          setGroupState({...value,nativeChatKey:key});setGroupMessage('已复位，该群回到界面接收文字。在群里 @ 她，插件会重新自动切换。');
+        }else{setGroupState({...value,nativeChatKey:key});setGroupMessage('复位后仍受阻。'+blockedReasonText(value?.blockedReason));}
+      }catch(error){if(mounted.current)setGroupMessage('复位未完成（'+String(error?.message||'unknown').slice(0,80)+'），该群保持原状。');}
+      finally{groupAction.current=false;if(mounted.current)setBusy(false);}
     }
     async function loadGroupStatus(){
       if(groupAction.current)return;groupAction.current=true;setBusy(true);groupPollAbort.current=null;setGroupState(null);
@@ -268,6 +302,7 @@ window.__ModuleLoader__.load({id:'local-dsh-wxauto',factory:require=>{
       }},h('option',{value:'',disabled:true},'先读取群接收状态'),...trustedGroups.map(row=>h('option',{key:row.nativeChatKey,value:row.nativeChatKey},row.target)))),
       h('button',{type:'button',disabled:busy,onClick:loadGroupStatus},'读取群接收状态'),
       h('button',{type:'button',disabled:busy||groupLocked(groupKey)||groupState?.nativeChatKey!==groupKey||groupState?.canActivate!==true||groupState?.authorityMode!=='ui',onClick:activateGroupText},'减少头像取名操作'),
+      h('button',{type:'button',disabled:busy||!groupKey||!(groupLocked(groupKey)||groupState?.nativeChatKey===groupKey&&(groupState?.authorityMode==='blocked'||groupState?.authorityMode==='native'&&groupState?.nativeActive===false&&!!groupState?.blockedReason)),onClick:resetGroupText},'复位该群'),
       h('p',{'aria-live':'polite'},groupMessage),
       h('h3',null,'待添加好友'),
       h('button',{type:'button',disabled:busy,onClick:loadPlan},'载入待添加好友方案'),

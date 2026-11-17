@@ -12,3 +12,17 @@ test('list refuses ambiguous scope and HTTP requires actual owner admission befo
  const invoke=async()=>{const req=Object.assign(Readable.from([]),{method:'GET',url:groupTextRoutesPath,headers:{},socket:{remoteAddress:'127.0.0.1'}});const res={writeHead(c){this.status=c},end(b){this.body=JSON.parse(b)}};await f.http.get(groupTextRoutesPath).handler(req,res);return res};
  f.setPrincipal('agent');assert.equal((await invoke()).status,403);assert.equal(reads,0);f.setPrincipal('owner');const res=await invoke();assert.equal(res.status,503);assert.equal(res.body.code,'group-text-routes-ambiguous');assert.equal(reads,1);assert.deepEqual(f.calls,[]);
 });
+
+test('reset route calls only reset and projects the blocked reason; status shows a reason',async()=>{
+  const calls=[],native=new Map();
+  registerGroupTextCutover({get:()=>({admit:()=>({peer:{principal:{kind:'owner'}}})}),inject(n,f){if(n[0]!=='webServer')f({connection:{fetch:{register:r=>native.set(r.path,r)}}});}},
+    {status:async key=>{calls.push(['status',key]);return {authorityMode:'blocked',canActivate:false,nativeActive:false,blockedReason:'route-session-or-chat-changed',secret:'x'}},
+     activate:async()=>{calls.push(['activate']);return {outcome:'refused'}},
+     reset:async key=>{calls.push(['reset',key]);return {reset:true,authorityMode:'ui',canActivate:false,nativeActive:false}}});
+  const resetPath=groupTextCutoverPath+'/reset';
+  const status=await (await native.get(groupTextCutoverPath).fetch(request(groupTextCutoverPath,{nativeChatKey:'wechat:r@chatroom'}))).json();
+  assert.equal(status.value.blockedReason,'route-session-or-chat-changed');assert.equal(status.value.secret,undefined);
+  const reset=await (await native.get(resetPath).fetch(request(resetPath,{nativeChatKey:'wechat:r@chatroom'}))).json();
+  assert.deepEqual(reset.value,{reset:true,authorityMode:'ui',canActivate:false,nativeActive:false});
+  assert.deepEqual(calls,[['status','wechat:r@chatroom'],['reset','wechat:r@chatroom']]);
+});

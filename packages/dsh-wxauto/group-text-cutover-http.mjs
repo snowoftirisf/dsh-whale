@@ -2,6 +2,7 @@
 // account/target/path. Registration itself does not restore or activate anything.
 export const groupTextCutoverPath='/api/local-dsh-wxauto/group-text-cutover';
 export const groupTextActivatePath=groupTextCutoverPath+'/activate';
+export const groupTextResetPath=groupTextCutoverPath+'/reset';
 export const groupTextRoutesPath='/api/local-dsh-wxauto/group-text-routes';
 const errorCode=e=>/^group-text-[a-z0-9-]{1,100}$/.test(e?.message??'')?e.message:'group-text-cutover-outcome-unknown';
 function project(raw,activation){
@@ -28,10 +29,12 @@ function project(raw,activation){
     }
   }
   if(typeof raw.code==='string'&&/^group-text-[a-z0-9-]{1,100}$/.test(raw.code))value.code=raw.code;
+  if(typeof raw.blockedReason==='string'&&/^[a-z0-9-]{1,120}$/.test(raw.blockedReason))value.blockedReason=raw.blockedReason;
+  if(raw.reset===true)value.reset=true;
   return value;
 }
-export function registerGroupTextCutover(ctx,{status,activate,groups=()=>[]}={}){
-  if(typeof status!=='function'||typeof activate!=='function'||typeof groups!=='function')throw Error('group-text-cutover-config-invalid');
+export function registerGroupTextCutover(ctx,{status,activate,reset=async()=>{throw Error('group-text-reset-unavailable');},groups=()=>[]}={}){
+  if(typeof status!=='function'||typeof activate!=='function'||typeof reset!=='function'||typeof groups!=='function')throw Error('group-text-cutover-config-invalid');
   if(typeof ctx.inject!=='function')return;
   function groupList(){
     const rows=groups();if(!Array.isArray(rows)||rows.length>256)throw Error('group-text-routes-unverified');
@@ -46,12 +49,12 @@ export function registerGroupTextCutover(ctx,{status,activate,groups=()=>[]}={})
     return out;
   }
   let busy=false;
-  const run=async (activation,args)=>{
-    if(!activation)return project(await status(args.nativeChatKey),false);
+  const run=async (action,args)=>{
+    if(!action)return project(await status(args.nativeChatKey),false);
     if(busy)throw Error('group-text-cutover-in-progress');busy=true;
-    try{return project(await activate(args.nativeChatKey),true);}finally{busy=false;}
+    try{return action==='reset'?project(await reset(args.nativeChatKey),false):project(await activate(args.nativeChatKey),true);}finally{busy=false;}
   };
-  for(const [route,method,activation] of [[groupTextRoutesPath,'GET',false],[groupTextCutoverPath,'POST',false],[groupTextActivatePath,'POST',true]]){
+  for(const [route,method,activation] of [[groupTextRoutesPath,'GET',false],[groupTextCutoverPath,'POST',false],[groupTextActivatePath,'POST',true],[groupTextResetPath,'POST','reset']]){
     ctx.inject(['webServer'],scope=>scope.effect(()=>scope.webServer.register({kind:'exact',path:route,handler:async(req,res)=>{
       const reply=(code,body)=>{res.writeHead(code,{'content-type':'application/json; charset=utf-8','cache-control':'no-store'});res.end(JSON.stringify(body));};
       try{
