@@ -38,6 +38,7 @@ function fixture(options={}){
   },close(){calls.push(['catalog-close'])}};
   const sync={async exclusiveRefresh(work){calls.push(['lease']);return await work({refresh(){
     const index=captures++;calls.push(['capture',index]);
+    if(options.captureFail)return Promise.resolve({ok:false,code:options.captureFail});
     if(options.holdCapture&&index===0){const promise=new Promise(resolve=>{held=resolve});promise.abort=()=>{abortCount++;held({ok:false})};return promise}
     return Promise.resolve({ok:true,snapshotId:options.sameSnapshot?ids[0]:ids[index]});
   }})}};
@@ -121,4 +122,10 @@ test('same reused snapshot and changed catalog text independently abort before b
     const f=fixture(options),result=await run(f);assert.equal(result.outcome,'aborted');
     assert.equal(count(f,'publish'),0);assert.equal(count(f,'group-text-abort'),1);assert.equal(f.paused(),false);
   }
+});
+test('a failed capture keeps its code as the cause the owner can see',async()=>{
+  const f=fixture({captureFail:'sync-failed:vault-worker-restart-backoff'});const s=await run(f);
+  assert.equal(s.outcome,'refused');assert.equal(s.code,'group-text-cutover-not-quiet');
+  assert.equal(s.cause,'group-text-cutover-capture-unverified:sync-failed:vault-worker-restart-backoff');
+  assert.equal(count(f,'group-text-prepare'),0);assert.equal(f.paused(),false);
 });

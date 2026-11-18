@@ -30,6 +30,7 @@ function project(raw,activation){
   }
   if(typeof raw.code==='string'&&/^group-text-[a-z0-9-]{1,100}$/.test(raw.code))value.code=raw.code;
   if(typeof raw.blockedReason==='string'&&/^[a-z0-9-]{1,120}$/.test(raw.blockedReason))value.blockedReason=raw.blockedReason;
+  for(const key of ['cause','recoveryCause'])if(typeof raw[key]==='string'&&/^[a-z][a-z0-9:_-]{0,199}$/.test(raw[key]))value[key]=raw[key];
   if(raw.reset===true)value.reset=true;
   return value;
 }

@@ -4,6 +4,9 @@ import {normalizeNativeGroupTextCatalog} from './group-text-contract.mjs';
 const hash=v=>createHash('sha256').update(JSON.stringify(v)).digest('hex');
 const uuid=v=>typeof v==='string'&&/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/.test(v);
 const fail=code=>{throw Error('group-text-cutover-'+code);};
+const codeLike=v=>typeof v==='string'&&/^[a-z][a-z0-9:_-]{0,160}$/.test(v);
+// Why the attempt stopped, as a code only (no free text): shown to the owner.
+const causeOf=error=>codeLike(error?.message)?error.message.slice(0,200):error?.name==='TypeError'?'internal-type-error':'unexpected-error';
 
 export function createGroupTextCutover({config,nativeChatKey,requestGroup,sync,catalogClient,publisher,runtime,
   getQuiet,pauseGroup,readActivity,ensureScanning,isClosed=()=>false,report=()=>{},now=Date.now,monitorMs=250}={}){
@@ -42,7 +45,10 @@ export function createGroupTextCutover({config,nativeChatKey,requestGroup,sync,c
       try{const a=readActivity();if(stopped()||a?.revision!==original.revision||a?.quiet!==true){interrupted=true;work.abort?.();}}
       catch{interrupted=true;work.abort?.();}
     },monitorMs);timer.unref?.();
-    try{const value=await work;if(interrupted||value?.ok!==true||!uuid(value.snapshotId))fail('capture-unverified');return value.snapshotId;}
+    try{const value=await work;
+      if(interrupted)fail('capture-interrupted');
+      if(value?.ok!==true||!uuid(value.snapshotId))fail('capture-unverified'+(codeLike(value?.code)?':'+value.code:''));
+      return value.snapshotId;}
     finally{clearInterval(timer);}
   }
   async function resume(){
@@ -90,7 +96,8 @@ export function createGroupTextCutover({config,nativeChatKey,requestGroup,sync,c
       });
       if(result?.committed!==true)fail('capture-lease-unavailable');
       await resume();
-    }catch{
+    }catch(error){
+      const cause=causeOf(error);
       // Status is queued AFTER any uncertain commit on the same worker pipe.
       // Native is recovered by restore, never by repeating commit or rollback.
       try{
@@ -109,9 +116,9 @@ export function createGroupTextCutover({config,nativeChatKey,requestGroup,sync,c
         }
         release?.();release=null;
         emit({phase:'aborted',outcome:ticket||publishAttempted?'aborted':'refused',authorityMode:'ui',nativeActive:false,
-          canActivate:false,code:commitAttempted?'group-text-cutover-commit-not-active':'group-text-cutover-not-quiet'});
-      }catch{emit({phase:'blocked',outcome:'unknown',authorityMode:'blocked',nativeActive:false,canActivate:false,
-        code:'group-text-cutover-outcome-unknown'});}
+          canActivate:false,code:commitAttempted?'group-text-cutover-commit-not-active':'group-text-cutover-not-quiet',cause});
+      }catch(recoveryError){emit({phase:'blocked',outcome:'unknown',authorityMode:'blocked',nativeActive:false,canActivate:false,
+        code:'group-text-cutover-outcome-unknown',cause,recoveryCause:causeOf(recoveryError)});}
     }
   }
   return Object.freeze({status,

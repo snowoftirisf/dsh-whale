@@ -131,7 +131,7 @@ window.__ModuleLoader__.load({id:'local-dsh-wxauto',factory:require=>{
       }else if(value.authorityMode==='native'&&value.nativeActive===false&&value.blockedReason){
         setGroupMessage('后台已是原生接收，但插件这边没有接上。'+blockedReasonText(value.blockedReason)+'可以点「复位该群」回到界面接收。');
       }else if(value.authorityMode==='native')setGroupMessage('该群已使用原生文字接收；仍需一条新消息验证实际收发。');
-      else if(value.outcome==='aborted'||value.outcome==='refused')setGroupMessage('本次未确认启用，请先重新读取该群状态。');
+      else if(value.outcome==='aborted'||value.outcome==='refused')setGroupMessage('本次未确认启用，请先重新读取该群状态。'+(value.cause?'（失败原因：'+value.cause+'）':''));
       else setGroupMessage('该群当前由界面接收文字；状态允许时可减少头像取名操作。');
     }
     async function resetGroupText(){

@@ -9,6 +9,7 @@ import {fileURLToPath} from 'node:url';
 
 const rootDirectory=path.dirname(fileURLToPath(import.meta.url));
 const coded=code=>Object.assign(new Error(code),{code});
+const codeLike=value=>typeof value==='string'&&/^[a-z][a-z0-9:_-]{0,100}$/.test(value);
 
 function channel(child,timeoutMs) {
   const pending=new Map();let terminal=null;
@@ -141,7 +142,9 @@ export function createSyncManager({python,dataRoot,vaultClient,capture={},isRead
           return {ok:false,code:'sync-cursor-rollback-failed'};
         }
       }
-      const code=signal.aborted?'sync-stopped':String(error?.code||'sync-failed').slice(0,120);
+      // Vault and other helpers reject with a code-shaped message but no .code.
+      // Keep that code (never free text, which may carry paths or names).
+      const code=signal.aborted?'sync-stopped':(error?.code?String(error.code):codeLike(error?.message)?'sync-failed:'+error.message:'sync-failed').slice(0,120);
       report(signal.aborted?'stopped':'failed',{busy:false,code});return {ok:false,code};
     } finally {
       // Keep the collector only after a clean commit; otherwise abort and discard it.

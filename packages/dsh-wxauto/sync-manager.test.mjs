@@ -167,3 +167,12 @@ test('stop while exclusive awaits previous capture does not invoke callback',asy
   await prior;await stopping;assert.equal((await lease).code,'sync-stopped');assert.equal(entered,false);
   assert.equal((await manager.exclusiveRefresh(()=>{})).code,'sync-stopped');assert.equal(manager.status().exclusive,false);
 });
+
+test('a code-shaped vault error keeps its code; free text never enters status',async()=>{
+  const f=fixture();const original=f.options.vaultClient.request;
+  f.options.vaultClient.request=async(op,args)=>{if(op==='import_snapshot'){await original(op,args);throw new Error('vault-worker-restart-backoff');}return original(op,args);};
+  const manager=createSyncManager(f.options);
+  assert.equal((await manager.refresh()).code,'sync-failed:vault-worker-restart-backoff');await manager.stop();
+  const g=fixture({importError:true});const other=createSyncManager(g.options);
+  assert.equal((await other.refresh()).code,'sync-failed');await other.stop();
+});
