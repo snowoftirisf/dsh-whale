@@ -184,7 +184,12 @@ def import_snapshot(vault,snapshotPath,account_id,*,reference_dir=None):
             previous=vault.db.execute('SELECT m.* FROM messages m JOIN sources s ON s.message_id=m.id WHERE s.chat_id=? AND s.source=? AND s.source_id=?',
                                      (chat_ids[key],SOURCE,row['source_id'])).fetchone()
             if previous and (previous['text']!=row['text'] or previous['native_id']!=row['native_id']):
-                raise VaultError('snapshot-source-identity-conflict')
+                # Say which part differs and the stored/new message kinds (fixed
+                # labels only, never content), so a recalled or re-sent row can
+                # be told apart from a reused row position without reading chats.
+                differs='-and-'.join(label for label,key in (('text','text'),('native-id','native_id')) if previous[key]!=row[key])
+                kind=lambda value:value if isinstance(value,str) and re.fullmatch('[a-z_]{1,16}',value) else 'other'
+                raise VaultError(f"snapshot-source-identity-conflict:{differs}:{kind(previous['type'])}-to-{kind(row['type'])}")
             if previous and row['direction']!='unknown' and re.fullmatch(r'wechat-server:[1-9][0-9]*',row['native_id'] or ''):
                 if previous['sender_id'] and row['sender_id'] and previous['sender_id']!=row['sender_id']:
                     raise VaultError('snapshot-source-sender-conflict')

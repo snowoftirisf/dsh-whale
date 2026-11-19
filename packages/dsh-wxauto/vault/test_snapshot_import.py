@@ -191,8 +191,18 @@ class SnapshotImportTests(unittest.TestCase):
         cursor=self.v.status()['cursors'].copy()
         with closing(sqlite3.connect(one/'message/message_0.db')) as db:
             db.execute(f'UPDATE [{TABLE}] SET message_content=? WHERE local_id=1',('不同内容',));db.commit()
-        with self.assertRaisesRegex(VaultError,'identity-conflict'):import_snapshot(self.v,one,'trusted-owner')
+        with self.assertRaisesRegex(VaultError,'^snapshot-source-identity-conflict:text:text-to-text$'):import_snapshot(self.v,one,'trusted-owner')
         self.assertEqual(self.v.status()['cursors'],cursor)
+
+    def test_identity_conflict_names_what_changed_without_content(self):
+        one=make_snapshot(self.root/'one');import_snapshot(self.v,one,'trusted-owner')
+        with closing(sqlite3.connect(one/'message/message_0.db')) as db:
+            db.execute(f'UPDATE [{TABLE}] SET message_content=?,local_type=10002,server_id=server_id+70000 WHERE local_id=1',('甲撤回了一条消息',));db.commit()
+        with self.assertRaises(VaultError) as caught:import_snapshot(self.v,one,'trusted-owner')
+        code=str(caught.exception)
+        self.assertEqual(code,'snapshot-source-identity-conflict:text-and-native-id:text-to-recalled')
+        # Must survive the plugin's code-only filters after the "vault-" prefix.
+        self.assertRegex('vault-'+code,r'^[a-z][a-z0-9:_-]{0,100}$')
 
     def test_source_change_during_scan_does_not_advance_cursor(self):
         snapshot=make_snapshot(self.root/'one');original=self.v.record_message
